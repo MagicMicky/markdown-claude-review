@@ -20,7 +20,7 @@ jobs:
     steps:
       - name: Fetch update metadata
         id: meta
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
 
       # For a grouped PR this reports the highest bump in the group, so one
       # major anywhere in the batch holds the whole PR back.
