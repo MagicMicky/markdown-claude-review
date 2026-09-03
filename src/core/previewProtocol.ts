@@ -10,7 +10,7 @@
  * index. Neither side needs the other's model.
  */
 
-import type { CardVM, Counts } from './cards.js';
+import type { CardVM } from './cards.js';
 import type { ThreadStatus } from './types.js';
 
 /** Where a thread's highlight lives, in terms the webview can act on. */
@@ -24,25 +24,20 @@ export interface HighlightSpec {
 }
 
 export type HostMessage =
-  /** Full document re-render. Expensive; sent when the markdown changes. */
-  | {
-      type: 'document';
-      rev: number;
-      html: string;
-      /** Line count, for the scroll-sync sentinel. */
-      lineCount: number;
-      title: string;
-    }
+  /**
+   * Full document re-render, carrying the generation of the block map it was
+   * built from. Highlights are expressed in terms of that map, so a `threads`
+   * message from an older generation must be discarded rather than painted
+   * onto a DOM it does not describe.
+   */
+  | { type: 'document'; generation: number; html: string }
   /** Thread content changed. Cheap relative to a re-render. */
   | {
       type: 'threads';
-      rev: number;
+      generation: number;
       author: string;
       cards: CardVM[];
       highlights: HighlightSpec[];
-      counts: Counts;
-      /** Filters live in the webview, but the host restores them on open. */
-      statuses: ThreadStatus[];
     }
   /** Which thread is active, and who decided. `origin` breaks the focus loop. */
   | { type: 'active'; threadId: string | null; origin: 'editor' | 'webview' | 'command' }
@@ -51,14 +46,7 @@ export type HostMessage =
   /** The editor's cursor line, for the `markEditorSelection` marker. */
   | { type: 'editorSelection'; line: number | null }
   /** A composer was opened for a captured anchor. */
-  | {
-      type: 'compose';
-      draftId: string;
-      block: number;
-      needle: string;
-      quote: string;
-      headingPath: string[];
-    }
+  | { type: 'compose'; draftId: string; block: number; needle: string; quote: string }
   | { type: 'draftLost'; draftId: string; reason: string }
   | { type: 'ack'; opId: string; ok: true }
   | { type: 'ack'; opId: string; ok: false; message: string };
@@ -85,5 +73,5 @@ export type ViewMessage =
   /** Double-click in the preview jumps the editor to that line. */
   | { type: 'openAtLine'; line: number }
   | { type: 'openLink'; href: string }
-  | { type: 'setStatuses'; statuses: ThreadStatus[] }
-  | { type: 'sendToClaude' };
+  /** Point a thread that lost its place at a freshly selected passage. */
+  | { type: 'reattach'; opId: string; threadId: string; blockStart: number; blockEnd: number; text: string };

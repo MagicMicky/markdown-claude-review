@@ -6,15 +6,11 @@ import {
   activeThreadAt,
   buildCard,
   buildCards,
-  countCards,
-  filterCards,
   relativeTime,
-  statusLabel,
   truncateQuote,
   type AnchorHit,
-  type CardVM,
 } from '../core/cards.js';
-import type { Thread, ThreadStatus } from '../core/types.js';
+import type { Thread } from '../core/types.js';
 
 function thread(over: Partial<Thread> = {}): Thread {
   return {
@@ -46,39 +42,21 @@ const hit = (over: Partial<AnchorHit> = {}): AnchorHit => ({
   end: 150,
   kind: 'exact',
   score: 1,
-  line: 7,
   ...over,
 });
 
 /* ---------------- card construction ---------------- */
 
-test('status maps to a label and the right capability flags', () => {
-  const cases: Array<[ThreadStatus, Partial<CardVM>]> = [
-    ['open', { canReply: true, canResolve: true, canReopen: false }],
-    ['answered', { canReply: true, canResolve: true, canReopen: false }],
-    ['resolved', { canReply: false, canResolve: false, canReopen: true }],
-    ['stale', { canReply: true, canResolve: true, canReopen: false }],
-  ];
-  for (const [status, expected] of cases) {
-    const card = buildCard('a.md', thread({ status }), hit());
-    assert.equal(card.statusLabel, statusLabel(status));
-    for (const [k, v] of Object.entries(expected)) {
-      assert.equal(card[k as keyof CardVM], v, `${status}.${k}`);
-    }
-  }
-});
 
 test('a lost anchor is reported, not guessed at', () => {
-  const card = buildCard('a.md', thread({ status: 'stale' }), undefined);
+  const card = buildCard(thread({ status: 'stale' }), undefined);
   assert.equal(card.anchor.attachment, 'lost');
-  assert.equal(card.anchor.line, null);
   assert.equal(card.canReattach, true);
   assert.equal(card.sortKey, LOST_SORT_KEY);
 });
 
 test('a drifted card shows the original wording plus what it says now', () => {
   const card = buildCard(
-    'a.md',
     thread(),
     hit({ kind: 'drifted', score: 0.8, currentText: 'Keys are rotated every 30 days via the KMS pipeline.' }),
   );
@@ -89,15 +67,10 @@ test('a drifted card shows the original wording plus what it says now', () => {
 });
 
 test('an exact card carries no currentQuote', () => {
-  const card = buildCard('a.md', thread(), hit({ currentText: 'ignored when exact' }));
+  const card = buildCard(thread(), hit({ currentText: 'ignored when exact' }));
   assert.equal(card.anchor.currentQuote, undefined);
 });
 
-test('headingLabel falls back to the document root', () => {
-  const t = thread();
-  t.anchor.headingPath = [];
-  assert.equal(buildCard('a.md', t, hit()).anchor.headingLabel, '(document root)');
-});
 
 /* ---------------- quotes ---------------- */
 
@@ -139,7 +112,7 @@ test('cards sort by document position, not by creation time', () => {
     ['early-in-doc', hit({ start: 100 })],
   ]);
   assert.deepEqual(
-    buildCards('a.md', threads, hits).map((c) => c.id),
+    buildCards(threads, hits).map((c) => c.id),
     ['early-in-doc', 'late-in-doc'],
   );
 });
@@ -152,7 +125,7 @@ test('lost anchors sort last, keeping creation order among themselves', () => {
   ];
   const hits = new Map<string, AnchorHit>([['placed', hit({ start: 500 })]]);
   assert.deepEqual(
-    buildCards('a.md', threads, hits).map((c) => c.id),
+    buildCards(threads, hits).map((c) => c.id),
     ['placed', 'lost-a', 'lost-b'],
   );
 });
@@ -200,51 +173,10 @@ test('identical spans resolve deterministically', () => {
   assert.equal(activeThreadAt(15, [...spans].reverse()), 'first');
 });
 
-/* ---------------- filtering and counts ---------------- */
 
-function cards(): CardVM[] {
-  const mk = (id: string, doc: string, status: ThreadStatus, body: string) =>
-    buildCard(doc, thread({ id, status, messages: [{ id: `m_${id}`, author: 'user', authorName: 'You', body, ts: '2026-09-01T10:00:00.000Z' }] }), hit());
-  return [
-    mk('o', 'a.md', 'open', 'the terraform module'),
-    mk('an', 'a.md', 'answered', 'looks fine now'),
-    mk('r', 'a.md', 'resolved', 'done'),
-    mk('s', 'b.md', 'stale', 'gone missing'),
-  ];
-}
 
-test('document scope hides other documents; workspace scope keeps them', () => {
-  const all: ThreadStatus[] = ['open', 'answered', 'resolved', 'stale'];
-  const inDoc = filterCards(cards(), { statuses: all, scope: 'document' }, 'a.md');
-  assert.deepEqual(inDoc.map((c) => c.id), ['o', 'an', 'r']);
-  const everywhere = filterCards(cards(), { statuses: all, scope: 'workspace' }, 'a.md');
-  assert.equal(everywhere.length, 4);
-});
 
-test('status filter selects buckets', () => {
-  const needsYou = filterCards(cards(), { statuses: ['open', 'stale'], scope: 'workspace' }, null);
-  assert.deepEqual(needsYou.map((c) => c.id).sort(), ['o', 's']);
-});
 
-test('query matches message bodies and the quote, case-insensitively', () => {
-  const all: ThreadStatus[] = ['open', 'answered', 'resolved', 'stale'];
-  const byBody = filterCards(cards(), { statuses: all, scope: 'workspace', query: 'TERRAFORM' }, null);
-  assert.deepEqual(byBody.map((c) => c.id), ['o']);
-
-  const byQuote = filterCards(cards(), { statuses: all, scope: 'workspace', query: 'kms pipeline' }, null);
-  assert.equal(byQuote.length, 4, 'every fixture shares the same quote');
-
-  const none = filterCards(cards(), { statuses: all, scope: 'workspace', query: 'nothing here' }, null);
-  assert.equal(none.length, 0);
-});
-
-test('needsAttention is open + stale, matching what a hand-off covers', () => {
-  const c = countCards(cards());
-  assert.deepEqual(c, { total: 4, open: 1, answered: 1, resolved: 1, stale: 1, needsAttention: 2 });
-  // The badge and the "Sent N comment(s)" toast must never disagree.
-  const sendCount = cards().filter((x) => x.status === 'open' || x.status === 'stale').length;
-  assert.equal(c.needsAttention, sendCount);
-});
 
 /* ---------------- time ---------------- */
 

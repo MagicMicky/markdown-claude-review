@@ -15,7 +15,6 @@
 
 import { relativeTime, type CardVM } from '../core/cards.js';
 import type { HighlightSpec, HostMessage, ViewMessage } from '../core/previewProtocol.js';
-import type { ThreadStatus } from '../core/types.js';
 import { findTextRange } from './textrange.js';
 
 interface VsCodeApi {
@@ -26,9 +25,8 @@ interface VsCodeApi {
 declare function acquireVsCodeApi(): VsCodeApi;
 
 interface PersistedState {
-  statuses: ThreadStatus[];
+  /** Unsent text, keyed by thread id for replies and draft id for new comments. */
   drafts: Record<string, string>;
-  scrollTop: number;
 }
 
 const vscode = acquireVsCodeApi();
@@ -55,7 +53,6 @@ interface Draft {
   block: number;
   needle: string;
   quote: string;
-  headingPath: string[];
   lost?: string;
 }
 
@@ -65,15 +62,14 @@ const state = {
   highlights: [] as HighlightSpec[],
   author: 'You',
   activeId: null as string | null,
-  statuses: (stored?.statuses ?? ['open', 'answered', 'stale']) as ThreadStatus[],
   drafts: stored?.drafts ?? ({} as Record<string, string>),
   draft: null as Draft | null,
   pending: {} as Record<string, Pending>,
   errors: {} as Record<string, string>,
   /** threadId → live Range in the rendered document. */
   ranges: new Map<string, Range>(),
-  editorLine: null as number | null,
-  rev: 0,
+  /** Block-map generation of the DOM currently rendered. */
+  generation: -1,
 };
 
 let opSeq = 0;
@@ -84,11 +80,7 @@ let saveTimer: number | undefined;
 function persist(): void {
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
-    vscode.setState({
-      statuses: state.statuses,
-      drafts: state.drafts,
-      scrollTop: window.scrollY,
-    });
+    vscode.setState({ drafts: state.drafts });
   }, 300);
 }
 
@@ -146,7 +138,7 @@ function paintHighlights(): void {
     const range = state.ranges.get(spec.threadId);
     if (!range) continue;
     if (spec.threadId === state.activeId) buckets.active.push(range);
-    else if (state.statuses.includes(spec.status)) buckets[spec.status]?.push(range);
+    else buckets[spec.status]?.push(range);
   }
   for (const [key, ranges] of Object.entries(buckets)) {
     const name = HIGHLIGHT_NAMES[key];
@@ -166,7 +158,7 @@ function paintHighlightsFallback(): void {
   }
   for (const spec of state.highlights) {
     const range = state.ranges.get(spec.threadId);
-    if (!range || !state.statuses.includes(spec.status)) continue;
+    if (!range) continue;
     const mark = document.createElement('span');
     mark.className = `mdreview-mark status-${spec.status}`;
     try {
@@ -181,10 +173,9 @@ function paintHighlightsFallback(): void {
  * Bubbles
  * ------------------------------------------------------------------ */
 
+/** Cards in the order their passages appear on screen. */
 function visibleCards(): CardVM[] {
-  return state.cards
-    .filter((c) => state.statuses.includes(c.status))
-    .sort((a, b) => anchorTop(a.id) - anchorTop(b.id));
+  return [...state.cards].sort((a, b) => anchorTop(a.id) - anchorTop(b.id));
 }
 
 function anchorTop(threadId: string): number {
@@ -354,6 +345,16 @@ function renderBubble(card: CardVM, sig: string, now: number): HTMLElement {
   if (card.anchor.attachment === 'lost') {
     node.append(el('div', 'note lost', 'The text this pointed at is gone. Its history is kept.'));
     node.append(el('blockquote', 'quote', card.anchor.quote));
+    const ready = Boolean(pendingSelection);
+    const reattach = el('button', '', 'Re-attach to selection');
+    reattach.disabled = busy || !ready;
+    reattach.title = ready
+      ? 'Point this comment at the text you have selected'
+      : 'Select the passage this comment should point at first';
+    reattach.addEventListener('click', () => reattachTo(card.id));
+    const row = el('div', 'actions');
+    row.append(reattach);
+    node.append(row);
   }
 
   const messages = active ? card.messages : card.messages.slice(0, 1);
@@ -384,7 +385,7 @@ function renderBubble(card: CardVM, sig: string, now: number): HTMLElement {
 
   if (active) {
     const actions = el('div', 'actions');
-    if (card.canReply) {
+    {
       const box = el('textarea', 'reply');
       box.rows = 2;
       box.placeholder = 'Reply…';
@@ -411,18 +412,10 @@ function renderBubble(card: CardVM, sig: string, now: number): HTMLElement {
       send.addEventListener('click', () => reply(card.id, box.value));
       actions.append(send);
     }
-    if (card.canResolve) {
-      const b = el('button', '', 'Resolve');
-      b.disabled = busy;
-      b.addEventListener('click', () => mutate('resolve', card.id));
-      actions.append(b);
-    }
-    if (card.canReopen) {
-      const b = el('button', '', 'Reopen');
-      b.disabled = busy;
-      b.addEventListener('click', () => mutate('reopen', card.id));
-      actions.append(b);
-    }
+    const resolve = el('button', '', 'Resolve');
+    resolve.disabled = busy;
+    resolve.addEventListener('click', () => mutate('resolve', card.id));
+    actions.append(resolve);
     actions.append(el('span', 'spacer'));
     const del = el('button', 'link danger', 'Delete');
     del.disabled = busy;
@@ -517,7 +510,17 @@ function reply(threadId: string, body: string): void {
   renderMargin();
 }
 
-function mutate(kind: 'resolve' | 'reopen' | 'delete', threadId: string): void {
+function reattachTo(threadId: string): void {
+  if (!pendingSelection) return;
+  const opId = nextOp();
+  state.pending[opId] = { kind: 'status', threadId };
+  post({ type: 'reattach', opId, threadId, ...pendingSelection });
+  addButton.hidden = true;
+  pendingSelection = null;
+  renderMargin();
+}
+
+function mutate(kind: 'resolve' | 'delete', threadId: string): void {
   const opId = nextOp();
   state.pending[opId] = { kind: 'status', threadId };
   post({ type: kind, opId, threadId } as ViewMessage);
@@ -730,7 +733,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   const m = event.data;
   switch (m.type) {
     case 'document': {
-      state.rev = m.rev;
+      state.generation = m.generation;
       // The rendered document. This is the one place HTML is injected, and it
       // is inherent to being a preview — VS Code's own does the same with the
       // same `html: true` markdown-it option, so that documents embedding HTML
@@ -748,11 +751,13 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     }
 
     case 'threads': {
-      state.rev = m.rev;
+      // Highlights are expressed against a block map. If the document has been
+      // re-rendered since this was built, painting it would put highlights on
+      // the wrong paragraphs — drop it and wait for the matching push.
+      if (m.generation !== state.generation) return;
       state.cards = m.cards;
       state.highlights = m.highlights;
       state.author = m.author;
-      state.statuses = m.statuses;
       for (const [opId, p] of Object.entries(state.pending)) {
         if (p.kind === 'create') continue;
         const card = m.cards.find((c) => c.id === p.threadId);
@@ -797,13 +802,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     }
 
     case 'compose':
-      state.draft = {
-        draftId: m.draftId,
-        block: m.block,
-        needle: m.needle,
-        quote: m.quote,
-        headingPath: m.headingPath,
-      };
+      state.draft = { draftId: m.draftId, block: m.block, needle: m.needle, quote: m.quote };
       renderMargin();
       return;
 
@@ -815,11 +814,16 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     case 'ack': {
       const op = state.pending[m.opId];
       delete state.pending[m.opId];
-      if (!m.ok && op) {
-        if (m.message && m.message !== 'cancelled' && 'threadId' in op) {
+      if (!m.ok && op && m.message && m.message !== 'cancelled') {
+        if (op.kind === 'create') {
+          // Give the draft back rather than losing what was typed.
+          state.drafts[op.draftId] = state.drafts[op.draftId] ?? '';
+          if (state.draft?.draftId === op.draftId) state.draft.lost = m.message;
+          else window.alert(m.message);
+        } else {
           state.errors[op.threadId] = m.message;
+          if (op.kind === 'reply') state.drafts[op.threadId] = op.body;
         }
-        if (op.kind === 'reply') state.drafts[op.threadId] = op.body;
         persist();
       }
       renderMargin();

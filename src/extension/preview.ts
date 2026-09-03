@@ -1,17 +1,16 @@
 import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
 import { buildAnchor } from '../core/anchor.js';
-import { buildCards, countCards, truncateQuote, type AnchorHit, type CardVM } from '../core/cards.js';
+import { buildCards, truncateQuote, type AnchorHit, type CardVM } from '../core/cards.js';
 import type { HighlightSpec, HostMessage, ViewMessage } from '../core/previewProtocol.js';
 import { locateInSource, renderedNeedle } from '../core/rendermap.js';
-import { makeId, type Anchor, type ThreadStatus } from '../core/types.js';
+import { makeId, type Anchor } from '../core/types.js';
 import type { ReviewActions } from './actions.js';
 import { previewSettings } from './config.js';
 import type { FocusTracker } from './focus.js';
 import { render, type RenderedBlock } from './markdown.js';
 import type { Session } from './session.js';
 
-const STATUS_KEY = 'mdreview.preview.statuses';
 const RENDER_DEBOUNCE_MS = 300;
 
 interface PendingDraft {
@@ -31,7 +30,8 @@ export class Preview implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly drafts = new Map<string, PendingDraft>();
   private blocks: RenderedBlock[] = [];
-  private rev = 0;
+  /** Bumped per render; identifies which block map the webview is showing. */
+  private generation = 0;
   private renderTimer?: NodeJS.Timeout;
   private suppressScrollUntil = 0;
 
@@ -41,7 +41,6 @@ export class Preview implements vscode.Disposable {
     private readonly session: Session,
     private readonly actions: ReviewActions,
     private readonly focus: FocusTracker,
-    private readonly memento: vscode.Memento,
     readonly docRelPath: string,
   ) {
     panel.webview.options = {
@@ -104,11 +103,7 @@ export class Preview implements vscode.Disposable {
     );
   }
 
-  /**
-   * The built-in preview's own stylesheets, found at runtime so there is no
-   * hardcoded VS Code build hash and no copy to drift. Falls back to our
-   * vendored pair if the extension is somehow absent.
-   */
+  /** Where VS Code's own preview keeps its stylesheets. */
   private builtInMedia(): vscode.Uri | undefined {
     const ext = vscode.extensions.getExtension('vscode.markdown-language-features');
     return ext ? vscode.Uri.joinPath(ext.extensionUri, 'media') : undefined;
@@ -137,20 +132,10 @@ export class Preview implements vscode.Disposable {
     const state = this.session.get(this.docRelPath);
     const out = new Map<string, AnchorHit>();
     if (!state) return out;
-    let line = 1;
-    const lineAt = (offset: number) => {
-      line = 1;
-      for (let i = 0; i < offset && i < text.length; i++) if (text[i] === '\n') line++;
-      return line;
-    };
     for (const t of state.file.threads) {
       const hit = state.resolved.get(t.id);
       if (!hit) continue;
-      out.set(t.id, {
-        ...hit,
-        line: lineAt(hit.start),
-        currentText: text.slice(hit.start, hit.end),
-      });
+      out.set(t.id, { ...hit, currentText: text.slice(hit.start, hit.end) });
     }
     return out;
   }
@@ -164,10 +149,6 @@ export class Preview implements vscode.Disposable {
       if (!best || b.end - b.start < best.end - best.start) best = b;
     }
     return best;
-  }
-
-  private statuses(): ThreadStatus[] {
-    return this.memento.get<ThreadStatus[]>(STATUS_KEY) ?? ['open', 'answered', 'stale'];
   }
 
   /* ---------------- pushes ---------------- */
@@ -190,13 +171,7 @@ export class Preview implements vscode.Disposable {
       },
     });
     this.blocks = rendered.blocks;
-    this.post({
-      type: 'document',
-      rev: ++this.rev,
-      html: rendered.html,
-      lineCount: text.split('\n').length,
-      title: this.docRelPath,
-    });
+    this.post({ type: 'document', generation: ++this.generation, html: rendered.html });
     this.pushThreads();
   }
 
@@ -205,10 +180,16 @@ export class Preview implements vscode.Disposable {
       const state = this.session.get(this.docRelPath);
       const threads = state?.file.threads ?? [];
       const hits = this.hits(text);
-      const cards: CardVM[] = buildCards(this.docRelPath, threads, hits);
+      // Resolved threads are not shown here. The preview is the live review
+      // surface; the closed history stays in the file and in the inline thread.
+      const cards: CardVM[] = buildCards(
+        threads.filter((t) => t.status !== 'resolved'),
+        hits,
+      );
 
       const highlights: HighlightSpec[] = [];
       for (const t of threads) {
+        if (t.status === 'resolved') continue;
         const hit = hits.get(t.id);
         if (!hit) {
           highlights.push({ threadId: t.id, status: t.status, block: -1, needle: '' });
@@ -225,12 +206,10 @@ export class Preview implements vscode.Disposable {
 
       this.post({
         type: 'threads',
-        rev: ++this.rev,
+        generation: this.generation,
         author: this.session.author,
         cards,
         highlights,
-        counts: countCards(cards),
-        statuses: this.statuses(),
       });
     });
   }
@@ -251,13 +230,17 @@ export class Preview implements vscode.Disposable {
     const asset = (...p: string[]) =>
       webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, ...p)).toString();
 
+    // VS Code's own preview stylesheets, found at runtime so there is no build
+    // hash to hardcode and nothing to drift. It is a built-in extension and
+    // cannot be uninstalled; if it is somehow missing, preview.css alone still
+    // renders readable prose.
     const builtIn = this.builtInMedia();
     const documentStyles = builtIn
       ? [
           webview.asWebviewUri(vscode.Uri.joinPath(builtIn, 'markdown.css')).toString(),
           webview.asWebviewUri(vscode.Uri.joinPath(builtIn, 'highlight.css')).toString(),
         ]
-      : [asset('media', 'markdown-fallback.css')];
+      : [];
 
     const settings = previewSettings(this.uri());
     const userStyles = settings.styles
@@ -386,7 +369,6 @@ ${links}
           block: m.blockStart,
           needle: renderedNeedle(text, range),
           quote,
-          headingPath: anchor.headingPath,
         });
         return;
       }
@@ -432,6 +414,36 @@ ${links}
         return;
       }
 
+      case 'reattach': {
+        const text = await this.sourceText();
+        const first = this.blocks[m.blockStart];
+        const last = this.blocks[m.blockEnd] ?? first;
+        const found = this.session.findThread(m.threadId);
+        if (!first || !found) {
+          this.ack(m.opId, false, 'Could not tell which passage that was.');
+          return;
+        }
+        const range = locateInSource(
+          text,
+          { startLine: first.startLine, endLine: last.endLine, start: first.start, end: Math.max(first.end, last.end) },
+          m.text,
+        );
+        if (!range) {
+          this.ack(m.opId, false, 'Could not locate that passage in the document.');
+          return;
+        }
+        await this.session.update(this.docRelPath, () => {
+          found.thread.anchor = buildAnchor(text, range.start, range.end);
+          delete found.thread.driftedAt;
+          found.thread.status =
+            found.thread.messages[found.thread.messages.length - 1]?.author === 'claude'
+              ? 'answered'
+              : 'open';
+        });
+        this.ack(m.opId, true);
+        return;
+      }
+
       case 'activate':
         this.focus.setActive(m.threadId, 'webview');
         return;
@@ -445,10 +457,14 @@ ${links}
         if (!editor) return;
         // Stop the editor's own scroll event bouncing straight back at us.
         this.suppressScrollUntil = Date.now() + 200;
-        editor.revealRange(
-          new vscode.Range(m.line, 0, m.line, 0),
-          vscode.TextEditorRevealType.AtTop,
+        // The webview interpolates within a block, so this is fractional and
+        // can exceed the document; Position wants a real line.
+        const doc = vscode.workspace.textDocuments.find(
+          (d) => d.uri.fsPath === this.uri().fsPath,
         );
+        const maxLine = Math.max(0, (doc?.lineCount ?? 1) - 1);
+        const line = Math.min(maxLine, Math.max(0, Math.floor(m.line)));
+        editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.AtTop);
         return;
       }
 
@@ -461,7 +477,10 @@ ${links}
           viewColumn: vscode.ViewColumn.One,
           preserveFocus: false,
         });
-        const pos = new vscode.Position(Math.min(m.line, doc.lineCount - 1), 0);
+        const pos = new vscode.Position(
+          Math.min(Math.max(0, Math.floor(m.line)), doc.lineCount - 1),
+          0,
+        );
         editor.selection = new vscode.Selection(pos, pos);
         editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
         return;
@@ -498,13 +517,6 @@ ${links}
         return;
       }
 
-      case 'setStatuses':
-        await this.memento.update(STATUS_KEY, m.statuses);
-        return;
-
-      case 'sendToClaude':
-        await vscode.commands.executeCommand('mdreview.sendToClaude');
-        return;
     }
   }
 
@@ -542,7 +554,6 @@ export class PreviewManager implements vscode.Disposable {
     private readonly session: Session,
     private readonly actions: ReviewActions,
     private readonly focus: FocusTracker,
-    private readonly memento: vscode.Memento,
   ) {}
 
   async show(document: vscode.TextDocument, column: vscode.ViewColumn): Promise<void> {
@@ -572,7 +583,6 @@ export class PreviewManager implements vscode.Disposable {
       this.session,
       this.actions,
       this.focus,
-      this.memento,
       docRelPath,
     );
     this.open.set(docRelPath, preview);

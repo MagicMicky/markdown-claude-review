@@ -62,13 +62,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let ui: CommentUI | undefined;
   const actions = new ReviewActions(session, () => ui);
   const decorations = new Decorations(session, focus, context.extensionUri);
-  const previews = new PreviewManager(
-    context.extensionUri,
-    session,
-    actions,
-    focus,
-    context.workspaceState,
-  );
+  const previews = new PreviewManager(context.extensionUri, session, actions, focus);
 
   const applyInlineMode = () => {
     const wanted = inlineMode() !== 'off';
