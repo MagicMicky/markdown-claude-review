@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Gutter markers are rendered as images, so they cannot use --vscode-*
+       variables. One neutral accent that reads on light and dark; status colour
+       is carried by the underline and the sidebar card. -->
+  <path fill="#4a9eff" d="M2.5 2h11A1.5 1.5 0 0 1 15 3.5v7a1.5 1.5 0 0 1-1.5 1.5H7l-3.6 2.7A.5.5 0 0 1 2.6 14L2.6 12h-.1A1.5 1.5 0 0 1 1 10.5v-7A1.5 1.5 0 0 1 2.5 2Z"/>
+</svg>

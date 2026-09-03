@@ -11,9 +11,12 @@ import {
   reviewPathFor,
   writeReview,
 } from '../core/store.js';
-import { nowIso, type ReviewFile, type ResolvedAnchor, type Thread } from '../core/types.js';
+import { nowIso, type ReviewFile, type ResolvedAnchor, type Thread, type ThreadStatus } from '../core/types.js';
 
 const execFileAsync = promisify(execFile);
+
+/** Long enough that a burst of typing re-anchors once, short enough to feel live. */
+const REANCHOR_DEBOUNCE_MS = 500;
 
 export interface DocState {
   /** Workspace-relative, forward-slashed. */
@@ -23,21 +26,41 @@ export interface DocState {
   resolved: Map<string, ResolvedAnchor>;
 }
 
+/** A thread's live position in the document, for callers that only need geometry. */
+export interface ThreadSpan {
+  id: string;
+  start: number;
+  end: number;
+  status: ThreadStatus;
+}
+
 /**
  * Owns every review file in the workspace: reads, writes, and keeps anchors
- * resolved against current document text. The comment UI and the tree view are
- * both projections of this.
+ * resolved against current document text. Every surface — the inline comment
+ * threads, the decorations, the sidebar — is a projection of this, and every
+ * mutation goes through `update()` so all of them observe the same events.
  */
 export class Session implements vscode.Disposable {
   private readonly docs = new Map<string, DocState>();
   private readonly emitter = new vscode.EventEmitter<string | undefined>();
+  private readonly reanchorEmitter = new vscode.EventEmitter<string>();
+  private reanchorDebounce?: NodeJS.Timeout;
   /** Paths we just wrote, so the file watcher does not echo our own changes back. */
   private readonly selfWrites = new Map<string, number>();
   private authorName = 'You';
   private disposables: vscode.Disposable[] = [];
 
-  /** Fires with a docRelPath, or undefined when everything changed. */
+  /** Thread content changed: added, replied, status, deleted, or an external write. */
   readonly onDidChange = this.emitter.event;
+
+  /**
+   * Anchor offsets moved but no thread content did — the typing path.
+   *
+   * Separate from `onDidChange` so surfaces can update line numbers at typing
+   * speed without re-rendering every thread body, and so no projection has to
+   * update itself behind the others' backs.
+   */
+  readonly onDidReanchor = this.reanchorEmitter.event;
 
   constructor(readonly root: string) {}
 
@@ -74,10 +97,51 @@ export class Session implements vscode.Disposable {
     });
     this.disposables.push(watcher);
 
+    // These live here, not in a projection. When CommentUI owned them it
+    // re-anchored and re-rendered itself directly without firing anything, so
+    // any other surface held stale offsets from the first keystroke until the
+    // next save.
+    this.disposables.push(
+      vscode.workspace.onDidSaveTextDocument(async (d) => {
+        const rel = this.docRelPath(d.uri);
+        if (rel && d.languageId === 'markdown') await this.refresh(rel);
+      }),
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (e.document.languageId !== 'markdown' || e.contentChanges.length === 0) return;
+        const rel = this.docRelPath(e.document.uri);
+        if (!rel || !this.docs.has(rel)) return;
+        clearTimeout(this.reanchorDebounce);
+        this.reanchorDebounce = setTimeout(() => {
+          const state = this.docs.get(rel);
+          if (!state) return;
+          // Positions only. Statuses are not persisted mid-edit: a quote can be
+          // transiently unmatchable halfway through a keystroke, and writing
+          // 'stale' for that would outlive the edit.
+          this.reanchor(state, e.document.getText());
+          this.reanchorEmitter.fire(rel);
+        }, REANCHOR_DEBOUNCE_MS);
+      }),
+    );
+
     for (const f of await listReviewFiles(this.root, this.reviewDir)) {
       await this.load(docRelPathFor(this.root, this.reviewDir, f));
     }
     this.emitter.fire(undefined);
+  }
+
+  /**
+   * Live positions of a document's threads, sorted by start offset. Threads
+   * whose anchor did not resolve are omitted — they have no geometry.
+   */
+  spans(docRelPath: string): ThreadSpan[] {
+    const state = this.docs.get(docRelPath);
+    if (!state) return [];
+    const out: ThreadSpan[] = [];
+    for (const t of state.file.threads) {
+      const hit = state.resolved.get(t.id);
+      if (hit) out.push({ id: t.id, start: hit.start, end: hit.end, status: t.status });
+    }
+    return out.sort((a, b) => a.start - b.start);
   }
 
   private async resolveAuthorName(): Promise<string> {
@@ -229,7 +293,9 @@ export class Session implements vscode.Disposable {
   }
 
   dispose(): void {
+    clearTimeout(this.reanchorDebounce);
     this.disposables.forEach((d) => d.dispose());
     this.emitter.dispose();
+    this.reanchorEmitter.dispose();
   }
 }

@@ -1,0 +1,312 @@
+/*
+ * Comment layer for the markdown preview.
+ *
+ * The document itself is styled by VS Code's own markdown.css and
+ * highlight.css, loaded from the built-in extension at runtime — this file only
+ * adds the margin, the bubbles and the highlights. Keeping the two separate is
+ * what makes the rendered document identical to the built-in preview rather
+ * than a lookalike.
+ *
+ * Colours come from --vscode-* only, so it sits inside any theme.
+ */
+
+:root {
+  --mdreview-margin-width: 260px;
+  --mdreview-margin-gap: 16px;
+}
+
+body {
+  /* Leave room for the bubble column without disturbing markdown.css's own
+     padding, which the built-in sets on html/body. */
+  padding-right: calc(var(--mdreview-margin-width) + var(--mdreview-margin-gap) + 26px) !important;
+  position: relative;
+}
+
+/* Narrow panels cannot afford a margin column; bubbles stack under the text. */
+@media (max-width: 720px) {
+  body {
+    padding-right: 26px !important;
+  }
+  .margin {
+    position: static !important;
+    width: auto !important;
+    margin-top: 24px;
+    border-top: 1px solid var(--vscode-panel-border);
+    padding-top: 12px;
+  }
+  .bubble {
+    position: static !important;
+    margin-bottom: 8px;
+  }
+}
+
+/* ---------------- highlights ---------------- */
+
+::highlight(mdreview-open) {
+  background-color: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent);
+}
+::highlight(mdreview-answered) {
+  background-color: color-mix(in srgb, var(--vscode-charts-yellow) 24%, transparent);
+}
+::highlight(mdreview-stale) {
+  background-color: color-mix(in srgb, var(--vscode-charts-orange) 22%, transparent);
+  text-decoration: underline dotted;
+}
+::highlight(mdreview-resolved) {
+  background-color: color-mix(in srgb, var(--vscode-charts-green) 14%, transparent);
+}
+::highlight(mdreview-active) {
+  background-color: color-mix(in srgb, var(--vscode-charts-blue) 40%, transparent);
+}
+
+/* Fallback for hosts without the CSS Custom Highlight API. */
+.mdreview-mark {
+  background-color: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent);
+  border-radius: 2px;
+}
+.mdreview-mark.status-answered {
+  background-color: color-mix(in srgb, var(--vscode-charts-yellow) 24%, transparent);
+}
+.mdreview-mark.status-stale {
+  background-color: color-mix(in srgb, var(--vscode-charts-orange) 22%, transparent);
+}
+
+/* ---------------- margin column ---------------- */
+
+.margin {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  width: var(--mdreview-margin-width);
+  height: 100%;
+  pointer-events: none;
+}
+
+.bubble {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  pointer-events: auto;
+  cursor: pointer;
+  /* No transition on `top`. Bubbles sit at document coordinates, so they do not
+     move while scrolling — and animating the position they are re-laid out to
+     made every content change look like a drift. */
+}
+
+.bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 5px 0 0 5px;
+  background: var(--vscode-charts-blue);
+}
+.bubble.status-answered::before {
+  background: var(--vscode-charts-yellow);
+}
+.bubble.status-resolved::before {
+  background: var(--vscode-charts-green);
+}
+.bubble.status-stale::before {
+  background: var(--vscode-charts-orange);
+}
+
+.bubble:hover {
+  border-color: var(--vscode-panel-border);
+}
+
+.bubble.active {
+  border-color: var(--vscode-focusBorder);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+}
+
+.bubble.busy {
+  opacity: 0.7;
+}
+
+.bubble.status-resolved:not(.active) {
+  opacity: 0.7;
+}
+
+.bubble-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.92em;
+}
+
+.who {
+  font-weight: 600;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.muted {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.msg {
+  margin-top: 4px;
+}
+
+.msg-head {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 0.9em;
+}
+
+.body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble.compact .body {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.msg.pending {
+  opacity: 0.55;
+}
+
+.more {
+  margin-top: 3px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.bubble .quote {
+  margin: 4px 0;
+  padding: 2px 6px;
+  border-left: 2px solid var(--vscode-textBlockQuote-border);
+  background: var(--vscode-textBlockQuote-background);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.88em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-left: 2px solid var(--vscode-charts-blue);
+  background: var(--vscode-textBlockQuote-background);
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.note.lost {
+  border-left-color: var(--vscode-charts-orange);
+}
+.note.error {
+  border-left-color: var(--vscode-errorForeground);
+  color: var(--vscode-errorForeground);
+}
+
+/* ---------------- inputs ---------------- */
+
+.reply {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 6px;
+  font: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.reply:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.actions button {
+  padding: 3px 10px;
+  font: inherit;
+  border: 0;
+  border-radius: 4px;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  cursor: pointer;
+}
+
+.actions button.primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.actions button.primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions button.link {
+  padding: 0;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+}
+
+.actions button.link.danger {
+  color: var(--vscode-errorForeground);
+}
+
+/* ---------------- select-to-comment ---------------- */
+
+.add-comment {
+  position: absolute;
+  z-index: 10;
+  padding: 3px 10px;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border: 0;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.add-comment:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.add-comment[hidden] {
+  display: none;
+}
+
+/* ---------------- high contrast ---------------- *
+ * HC themes drop background fills, so a bubble distinguished only by its
+ * background would disappear. Give every one an explicit edge. */
+
+body.vscode-high-contrast .bubble,
+body.vscode-high-contrast-light .bubble {
+  border-color: var(--vscode-contrastBorder, var(--vscode-panel-border));
+}

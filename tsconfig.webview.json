@@ -1,0 +1,15 @@
+{
+  // The webview runs in a browser, so it needs the DOM lib — which must not
+  // leak into the root project, or src/core could quietly start using
+  // `document`. Files reached through imports (src/core/sidebar.ts and its
+  // dependencies) are typechecked here too; listing them in `include` as well
+  // would put them in two projects at once, which is what makes the editor's
+  // language server assign files to the wrong program and report phantom
+  // "cannot find name 'process'" errors in src/mcp.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/webview/**/*.ts"],
+  "exclude": []
+}
