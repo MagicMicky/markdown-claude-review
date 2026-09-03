@@ -597,8 +597,10 @@ function evaluateSelection(): void {
   }
   // Source offsets come from the runs the selection touches, so a selection
   // crossing paragraphs, table cells or inline markup needs no special case.
-  const range = selectionRange(sel);
-  if (!range || !doc.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+  // Scoped to the rendered document, so a selection in a bubble does not
+  // offer to comment on itself.
+  const range = selectionRange(doc, sel);
+  if (!range) {
     addButton.hidden = true;
     pendingSelection = null;
     return;

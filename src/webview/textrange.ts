@@ -105,14 +105,43 @@ export function sourceOffsetAt(node: Node, offset: number): number | null {
   return start;
 }
 
-/** Source range for the current selection, or null if it is not in the document. */
-export function selectionRange(sel: Selection): { start: number; end: number } | null {
+/**
+ * Source range for the current selection, or null if it covers no rendered text.
+ *
+ * Derived from the runs the selection *intersects*, not from its endpoints.
+ * Requiring both endpoints to sit inside a labelled run is wrong: selecting to
+ * the end of a paragraph, or triple-clicking one, leaves the end point on the
+ * paragraph element itself, which carries no label — so the whole selection
+ * looked like it covered nothing. The endpoints are still used, but only to
+ * narrow the first and last run when they happen to resolve.
+ */
+export function selectionRange(
+  root: ParentNode,
+  sel: Selection,
+): { start: number; end: number } | null {
   if (sel.rangeCount === 0 || sel.isCollapsed) return null;
-  const r = sel.getRangeAt(0);
-  const a = sourceOffsetAt(r.startContainer, r.startOffset);
-  const b = sourceOffsetAt(r.endContainer, r.endOffset);
-  if (a === null || b === null) return null;
-  const start = Math.min(a, b);
-  const end = Math.max(a, b);
-  return end > start ? { start, end } : null;
+  const domRange = sel.getRangeAt(0);
+
+  const touched = runsIn(root).filter((r) => {
+    try {
+      return domRange.intersectsNode(r.el);
+    } catch {
+      return false;
+    }
+  });
+  if (touched.length === 0) return null;
+
+  const first = touched[0];
+  const last = touched[touched.length - 1];
+  const a = sourceOffsetAt(domRange.startContainer, domRange.startOffset);
+  const b = sourceOffsetAt(domRange.endContainer, domRange.endOffset);
+
+  const lo = a !== null && b !== null ? Math.min(a, b) : (a ?? b ?? first.start);
+  const hi = a !== null && b !== null ? Math.max(a, b) : (b ?? a ?? last.end);
+  const start = Math.max(first.start, Math.min(lo, last.end));
+  const end = Math.min(last.end, Math.max(hi, first.start));
+
+  if (end > start) return { start, end };
+  // The endpoints told us nothing useful; take everything they touched.
+  return last.end > first.start ? { start: first.start, end: last.end } : null;
 }
