@@ -13,14 +13,18 @@
 import type { CardVM } from './cards.js';
 import type { ThreadStatus } from './types.js';
 
-/** Where a thread's highlight lives, in terms the webview can act on. */
+/**
+ * Where a thread's highlight lives.
+ *
+ * Source offsets, not text to search for. The rendered HTML carries the source
+ * offsets of every run of text, so the webview can find the passage exactly —
+ * and across paragraphs, which a single block index could not express.
+ */
 export interface HighlightSpec {
   threadId: string;
   status: ThreadStatus;
-  /** Block to search in — matches `data-block` in the rendered HTML. */
-  block: number;
-  /** Visible text to find inside that block. Empty when the anchor is lost. */
-  needle: string;
+  /** Absent when the anchor no longer resolves. */
+  range?: { start: number; end: number };
 }
 
 export type HostMessage =
@@ -46,7 +50,7 @@ export type HostMessage =
   /** The editor's cursor line, for the `markEditorSelection` marker. */
   | { type: 'editorSelection'; line: number | null }
   /** A composer was opened for a captured anchor. */
-  | { type: 'compose'; draftId: string; block: number; needle: string; quote: string }
+  | { type: 'compose'; draftId: string; range: { start: number; end: number }; quote: string }
   | { type: 'draftLost'; draftId: string; reason: string }
   | { type: 'ack'; opId: string; ok: true }
   | { type: 'ack'; opId: string; ok: false; message: string };
@@ -54,12 +58,11 @@ export type HostMessage =
 export type ViewMessage =
   | { type: 'ready'; knownDraftIds: string[] }
   /**
-   * A selection the user wants to comment on. `blockStart`/`blockEnd` bracket
-   * the rendered blocks it covers — a triple-click or a drag across paragraphs
-   * spans more than one — and `text` is what they selected. The host maps it to
-   * source offsets; the webview has no idea where that is in the file.
+   * A selection the user wants to comment on, already in source offsets — the
+   * DOM carries them, so nothing has to reconstruct which characters were
+   * markup.
    */
-  | { type: 'startCompose'; blockStart: number; blockEnd: number; text: string }
+  | { type: 'startCompose'; start: number; end: number }
   | { type: 'createThread'; opId: string; draftId: string; body: string }
   | { type: 'cancelDraft'; draftId: string }
   | { type: 'reply'; opId: string; threadId: string; body: string }
@@ -74,4 +77,4 @@ export type ViewMessage =
   | { type: 'openAtLine'; line: number }
   | { type: 'openLink'; href: string }
   /** Point a thread that lost its place at a freshly selected passage. */
-  | { type: 'reattach'; opId: string; threadId: string; blockStart: number; blockEnd: number; text: string };
+  | { type: 'reattach'; opId: string; threadId: string; start: number; end: number };

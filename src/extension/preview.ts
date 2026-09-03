@@ -3,12 +3,11 @@ import * as crypto from 'node:crypto';
 import { buildAnchor } from '../core/anchor.js';
 import { buildCards, truncateQuote, type AnchorHit, type CardVM } from '../core/cards.js';
 import type { HighlightSpec, HostMessage, ViewMessage } from '../core/previewProtocol.js';
-import { locateInSource, renderedNeedle } from '../core/rendermap.js';
 import { makeId, type Anchor } from '../core/types.js';
 import type { ReviewActions } from './actions.js';
 import { previewSettings } from './config.js';
 import type { FocusTracker } from './focus.js';
-import { render, type RenderedBlock } from './markdown.js';
+import { render } from './markdown.js';
 import type { Session } from './session.js';
 
 const RENDER_DEBOUNCE_MS = 300;
@@ -29,7 +28,6 @@ interface PendingDraft {
 export class Preview implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly drafts = new Map<string, PendingDraft>();
-  private blocks: RenderedBlock[] = [];
   /** Bumped per render; identifies which block map the webview is showing. */
   private generation = 0;
   private renderTimer?: NodeJS.Timeout;
@@ -140,15 +138,14 @@ export class Preview implements vscode.Disposable {
     return out;
   }
 
-  /** The block a source offset falls in — how a thread finds its highlight. */
-  private blockAt(offset: number): RenderedBlock | undefined {
-    let best: RenderedBlock | undefined;
-    for (const b of this.blocks) {
-      if (offset < b.start || offset >= b.end) continue;
-      // Innermost wins: a list item beats the list containing it.
-      if (!best || b.end - b.start < best.end - best.start) best = b;
-    }
-    return best;
+  /**
+   * Keep a webview-supplied range inside the document it claims to describe.
+   * The offsets come from the DOM, which can be a render behind the source.
+   */
+  private clamp(text: string, r: { start: number; end: number }): { start: number; end: number } | null {
+    const start = Math.max(0, Math.min(r.start, text.length));
+    const end = Math.max(start, Math.min(r.end, text.length));
+    return end > start ? { start, end } : null;
   }
 
   /* ---------------- pushes ---------------- */
@@ -170,7 +167,6 @@ export class Preview implements vscode.Disposable {
           .toString();
       },
     });
-    this.blocks = rendered.blocks;
     this.post({ type: 'document', generation: ++this.generation, html: rendered.html });
     this.pushThreads();
   }
@@ -191,16 +187,10 @@ export class Preview implements vscode.Disposable {
       for (const t of threads) {
         if (t.status === 'resolved') continue;
         const hit = hits.get(t.id);
-        if (!hit) {
-          highlights.push({ threadId: t.id, status: t.status, block: -1, needle: '' });
-          continue;
-        }
-        const block = this.blockAt(hit.start);
         highlights.push({
           threadId: t.id,
           status: t.status,
-          block: block?.index ?? -1,
-          needle: renderedNeedle(text, { start: hit.start, end: hit.end }),
+          range: hit ? { start: hit.start, end: hit.end } : undefined,
         });
       }
 
@@ -343,33 +333,13 @@ ${links}
 
       case 'startCompose': {
         const text = await this.sourceText();
-        const first = this.blocks[m.blockStart];
-        const last = this.blocks[m.blockEnd] ?? first;
-        if (!first) {
-          vscode.window.showWarningMessage('Could not tell which part of the document that was.');
-          return;
-        }
-        // One search window covering every block the selection touched, so a
-        // sentence spanning two paragraphs still resolves.
-        const block = {
-          startLine: first.startLine,
-          endLine: last.endLine,
-          start: first.start,
-          end: Math.max(first.end, last.end),
-        };
-        const range = locateInSource(text, block, m.text);
+        const range = this.clamp(text, m);
         if (!range) return;
         const anchor = buildAnchor(text, range.start, range.end);
         const draftId = makeId('d');
         this.drafts.set(draftId, { docRelPath: this.docRelPath, anchor });
         const { text: quote } = truncateQuote(anchor.quote);
-        this.post({
-          type: 'compose',
-          draftId,
-          block: m.blockStart,
-          needle: renderedNeedle(text, range),
-          quote,
-        });
+        this.post({ type: 'compose', draftId, range, quote });
         return;
       }
 
@@ -416,20 +386,10 @@ ${links}
 
       case 'reattach': {
         const text = await this.sourceText();
-        const first = this.blocks[m.blockStart];
-        const last = this.blocks[m.blockEnd] ?? first;
         const found = this.session.findThread(m.threadId);
-        if (!first || !found) {
+        const range = this.clamp(text, m);
+        if (!found || !range) {
           this.ack(m.opId, false, 'Could not tell which passage that was.');
-          return;
-        }
-        const range = locateInSource(
-          text,
-          { startLine: first.startLine, endLine: last.endLine, start: first.start, end: Math.max(first.end, last.end) },
-          m.text,
-        );
-        if (!range) {
-          this.ack(m.opId, false, 'Could not locate that passage in the document.');
           return;
         }
         await this.session.update(this.docRelPath, () => {

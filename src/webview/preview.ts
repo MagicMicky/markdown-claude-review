@@ -15,7 +15,7 @@
 
 import { relativeTime, type CardVM } from '../core/cards.js';
 import type { HighlightSpec, HostMessage, ViewMessage } from '../core/previewProtocol.js';
-import { findTextRange } from './textrange.js';
+import { rangeForSource, selectionRange } from './textrange.js';
 
 interface VsCodeApi {
   postMessage(message: ViewMessage): void;
@@ -50,8 +50,7 @@ type Pending =
 
 interface Draft {
   draftId: string;
-  block: number;
-  needle: string;
+  range: { start: number; end: number };
   quote: string;
   lost?: string;
 }
@@ -115,10 +114,8 @@ const supportsHighlightApi =
 function rebuildHighlights(): void {
   state.ranges.clear();
   for (const spec of state.highlights) {
-    if (spec.block < 0 || !spec.needle) continue;
-    const block = doc.querySelector(`[data-block="${spec.block}"]`);
-    if (!block) continue;
-    const range = findTextRange(block, spec.needle);
+    if (!spec.range) continue;
+    const range = rangeForSource(doc, spec.range.start, spec.range.end);
     if (range) state.ranges.set(spec.threadId, range);
   }
   paintHighlights();
@@ -217,14 +214,19 @@ function layoutBubbles(): void {
   // Write phase — place each bubble at its passage, pushing later ones down so
   // none overlap. This is why the preview is our own webview: here we can read
   // the geometry VS Code's editor never exposes.
+  //
+  // A bubble with no passage on screen goes after the last one that has one,
+  // never at the top: `previousBottom` starts at -Infinity, so clamping it to
+  // zero used to park unanchored bubbles at the head of the document.
   let previousBottom = -Infinity;
+  let lastAnchored = 0;
   for (const { el, desired, height } of measured) {
-    const top =
-      desired === Number.MAX_SAFE_INTEGER
-        ? previousBottom + BUBBLE_GAP
-        : Math.max(desired, previousBottom + BUBBLE_GAP);
-    el.style.top = `${Math.max(0, top)}px`;
+    const anchored = desired !== Number.MAX_SAFE_INTEGER;
+    const base = anchored ? desired : Math.max(lastAnchored, previousBottom);
+    const top = Math.max(base, previousBottom + BUBBLE_GAP, 0);
+    el.style.top = `${top}px`;
     previousBottom = top + height;
+    if (anchored) lastAnchored = top + height;
   }
   if (composer && composerTop !== null) composer.style.top = `${Math.max(0, composerTop)}px`;
 }
@@ -236,8 +238,7 @@ function draftAnchorTop(): number {
 
 function draftRange(): Range | null {
   if (!state.draft) return null;
-  const block = doc.querySelector(`[data-block="${state.draft.block}"]`);
-  return block ? findTextRange(block, state.draft.needle) : null;
+  return rangeForSource(doc, state.draft.range.start, state.draft.range.end);
 }
 
 /* ------------------------------------------------------------------ *
@@ -553,7 +554,7 @@ function cancelDraft(): void {
  * ------------------------------------------------------------------ */
 
 let selectionTimer: number | undefined;
-let pendingSelection: { blockStart: number; blockEnd: number; text: string } | null = null;
+let pendingSelection: { start: number; end: number } | null = null;
 
 // Hide eagerly when the selection collapses, but only *show* once the gesture
 // has finished — chasing the pointer through a drag is what made selecting feel
@@ -587,48 +588,29 @@ function threadAtPoint(x: number, y: number): string | null {
   return best?.id ?? null;
 }
 
-/** The rendered block a DOM node sits in, if any. */
-function blockOf(node: Node): Element | null {
-  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  const block = el?.closest('[data-block]') ?? null;
-  return block && doc.contains(block) ? block : null;
-}
-
 function evaluateSelection(): void {
   const sel = window.getSelection();
-  const text = sel?.toString() ?? '';
-  if (!sel || sel.isCollapsed || !text.trim()) {
+  if (!sel || sel.isCollapsed || !sel.toString().trim()) {
     addButton.hidden = true;
     pendingSelection = null;
     return;
   }
-  const range = sel.getRangeAt(0);
-  // Resolve the endpoints, not the common ancestor. A triple-click selects the
-  // paragraph plus its trailing newline, which lifts the common ancestor to a
-  // container with no data-block — and the button would silently never appear.
-  const startBlock = blockOf(range.startContainer);
-  const endBlock = blockOf(range.endContainer) ?? startBlock;
-  if (!startBlock) {
+  // Source offsets come from the runs the selection touches, so a selection
+  // crossing paragraphs, table cells or inline markup needs no special case.
+  const range = selectionRange(sel);
+  if (!range || !doc.contains(sel.getRangeAt(0).commonAncestorContainer)) {
     addButton.hidden = true;
     pendingSelection = null;
     return;
   }
 
-  const a = Number(startBlock.getAttribute('data-block'));
-  const b = Number((endBlock ?? startBlock).getAttribute('data-block'));
-  pendingSelection = {
-    blockStart: Math.min(a, b),
-    blockEnd: Math.max(a, b),
-    text,
-  };
-  const rect = range.getBoundingClientRect();
+  pendingSelection = range;
+  const rect = sel.getRangeAt(0).getBoundingClientRect();
   addButton.hidden = false;
   addButton.style.top = `${rect.bottom + window.scrollY + 6}px`;
   addButton.style.left = `${Math.max(8, rect.left + window.scrollX)}px`;
 }
 
-// Pressing the button would otherwise collapse the very selection it acts on,
-// and the selectionchange handler above would hide it before the click landed.
 addButton.addEventListener('mousedown', (e) => e.preventDefault());
 
 addButton.addEventListener('click', () => {
@@ -802,7 +784,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     }
 
     case 'compose':
-      state.draft = { draftId: m.draftId, block: m.block, needle: m.needle, quote: m.quote };
+      state.draft = { draftId: m.draftId, range: m.range, quote: m.quote };
       renderMargin();
       return;
 

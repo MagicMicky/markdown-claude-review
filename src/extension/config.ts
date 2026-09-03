@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import type { PreviewSettings } from './markdown.js';
+
+export type { PreviewSettings };
 
 /** How comment threads appear in the editor itself. */
 export type InlineMode = 'collapsed' | 'expanded' | 'off';
@@ -8,25 +11,6 @@ export function inlineMode(): InlineMode {
     .getConfiguration('mdreview')
     .get<string>('inlineThreads', 'collapsed');
   return raw === 'expanded' || raw === 'off' ? raw : 'collapsed';
-}
-
-/**
- * The subset of `markdown.preview.*` our renderer honours, so the preview reads
- * and behaves like the built-in one rather than merely resembling it.
- */
-export interface PreviewSettings {
-  breaks: boolean;
-  linkify: boolean;
-  typographer: boolean;
-  fontFamily?: string;
-  fontSize?: number;
-  lineHeight?: number;
-  scrollPreviewWithEditor: boolean;
-  scrollEditorWithPreview: boolean;
-  markEditorSelection: boolean;
-  doubleClickToSwitchToEditor: boolean;
-  /** User stylesheets from `markdown.styles`. */
-  styles: string[];
 }
 
 export function previewSettings(resource?: vscode.Uri): PreviewSettings {
