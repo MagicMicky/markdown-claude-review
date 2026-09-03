@@ -12,7 +12,8 @@ import {
   listReviewFiles,
   makeMessage,
   newThread,
-  readReview,
+  loadReview,
+  mergeReviewFiles,
   reviewPathFor,
   setStatus,
   writeReview,
@@ -33,9 +34,27 @@ const REVIEW_DIR = process.env.MDREVIEW_DIR ?? DEFAULT_REVIEW_DIR;
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * Resolve a caller-supplied document path inside the workspace, or reject it.
+ *
+ * `document` arrives from a tool call, and an agent that has read hostile prose
+ * may pass anything. Without this, `../../` escaped MDREVIEW_ROOT in both
+ * directions: reading a file outside it, and writing a `.review.json` beside it.
+ */
+function safeDocPath(docRelPath: string): string | undefined {
+  if (!docRelPath || path.isAbsolute(docRelPath)) return undefined;
+  const normalised = path.normalize(docRelPath);
+  if (normalised.split(/[\\/]/).includes('..')) return undefined;
+  const resolved = path.resolve(ROOT, normalised);
+  if (resolved !== ROOT && !resolved.startsWith(ROOT + path.sep)) return undefined;
+  return resolved;
+}
+
 async function docText(docRelPath: string): Promise<string | undefined> {
+  const full = safeDocPath(docRelPath);
+  if (!full) return undefined;
   try {
-    return await fsp.readFile(path.join(ROOT, ...docRelPath.split('/')), 'utf8');
+    return await fsp.readFile(full, 'utf8');
   } catch {
     return undefined;
   }
@@ -51,9 +70,28 @@ async function loadAll(): Promise<LoadedDoc[]> {
   const out: LoadedDoc[] = [];
   for (const f of await listReviewFiles(ROOT, REVIEW_DIR)) {
     const rel = docRelPathFor(ROOT, REVIEW_DIR, f);
-    out.push({ docRelPath: rel, file: await readReview(f, rel), reviewPath: f });
+    const loaded = await loadReview(f, rel);
+    // Skip unreadable files rather than presenting them as empty: reporting a
+    // document as having no comments would invite writing over the ones it has.
+    if (loaded.kind === 'corrupt') continue;
+    out.push({ docRelPath: rel, file: loaded.file, reviewPath: f });
   }
   return out;
+}
+
+/**
+ * Write a review file, merging with whatever is on disk first.
+ *
+ * The extension holds and rewrites this same file from another process. Without
+ * the merge, whichever side writes second silently reverts the other.
+ */
+async function persist(doc: LoadedDoc): Promise<string | undefined> {
+  const current = await loadReview(doc.reviewPath, doc.docRelPath);
+  if (current.kind === 'corrupt') {
+    return `Cannot write to "${doc.docRelPath}": its review file is unreadable (${current.reason}).`;
+  }
+  await writeReview(doc.reviewPath, mergeReviewFiles(doc.file, current.file));
+  return undefined;
 }
 
 async function locate(threadId: string): Promise<{ doc: LoadedDoc; thread: Thread } | undefined> {
@@ -243,7 +281,8 @@ server.registerTool(
     const found = await locate(thread_id);
     if (!found) return err(`No thread "${thread_id}".`);
     appendMessage(found.thread, makeMessage('claude', 'Claude', body));
-    await writeReview(found.doc.reviewPath, found.doc.file);
+    const failed = await persist(found.doc);
+    if (failed) return err(failed);
     return ok({ id: thread_id, status: found.thread.status, message: 'Reply posted.' });
   },
 );
@@ -269,7 +308,8 @@ server.registerTool(
     if (!found) return err(`No thread "${thread_id}".`);
     if (note) appendMessage(found.thread, makeMessage('claude', 'Claude', note));
     setStatus(found.thread, 'resolved');
-    await writeReview(found.doc.reviewPath, found.doc.file);
+    const failed = await persist(found.doc);
+    if (failed) return err(failed);
     return ok({ id: thread_id, status: 'resolved' });
   },
 );
@@ -289,6 +329,9 @@ server.registerTool(
     },
   },
   async ({ document, quote, body }) => {
+    if (!safeDocPath(document)) {
+      return err(`"${document}" is not a path inside this workspace.`);
+    }
     const text = await docText(document);
     if (text === undefined) return err(`Cannot read "${document}".`);
     const start = text.indexOf(quote);
@@ -303,13 +346,17 @@ server.registerTool(
       );
     }
     const reviewPath = reviewPathFor(ROOT, REVIEW_DIR, document);
-    const file = await readReview(reviewPath, document);
+    const loaded = await loadReview(reviewPath, document);
+    if (loaded.kind === 'corrupt') {
+      return err(`The review file for "${document}" is unreadable (${loaded.reason}).`);
+    }
     const thread = newThread(
       buildAnchor(text, start, start + quote.length),
       makeMessage('claude', 'Claude', body),
     );
-    file.threads.push(thread);
-    await writeReview(reviewPath, file);
+    loaded.file.threads.push(thread);
+    const failed = await persist({ docRelPath: document, file: loaded.file, reviewPath });
+    if (failed) return err(failed);
     return ok({ id: thread.id, status: thread.status, line: lineAt(text, start) });
   },
 );

@@ -30,9 +30,19 @@ export function lineOffsets(source: string): number[] {
   return offsets;
 }
 
-/** Resolve a markdown-it `token.map` pair to a character range. */
-export function blockRange(source: string, startLine: number, endLine: number): BlockRange {
-  const offsets = lineOffsets(source);
+/**
+ * Resolve a markdown-it `token.map` pair to a character range.
+ *
+ * Pass `offsets` when converting many blocks of one document: computing them
+ * per block is O(blocks x document length), which took 12 seconds on a 600 KB
+ * file — synchronously, on the extension host's main thread.
+ */
+export function blockRange(
+  source: string,
+  startLine: number,
+  endLine: number,
+  offsets: readonly number[] = lineOffsets(source),
+): BlockRange {
   const start = offsets[Math.min(startLine, offsets.length - 1)] ?? 0;
   const end = endLine < offsets.length ? offsets[endLine] : source.length;
   return { startLine, endLine, start, end };
@@ -78,6 +88,13 @@ export function stripInline(source: string): Stripped {
     map.push(at);
   };
 
+  // Pair every bracket once, up front. Scanning forward from each `[` for its
+  // partner is quadratic when they do not pair up — a paragraph of brackets, an
+  // ASCII table, a pasted log — and that ran on every thread push.
+  const brackets = bracketPairs(source);
+  // Same reasoning for backtick runs that never close.
+  const unmatched = new Set<number>();
+
   let i = 0;
   let atLineStart = true;
 
@@ -114,10 +131,11 @@ export function stripInline(source: string): Stripped {
     }
 
     // Inline code: keep the contents, drop the backtick fences.
-    if (ch === '`') {
+    if (ch === '`' && !unmatched.has(i)) {
       let fence = 0;
       while (source[i + fence] === '`') fence++;
       const close = source.indexOf('`'.repeat(fence), i + fence);
+      if (close === -1) for (let k = i; k < i + fence; k++) unmatched.add(k);
       if (close !== -1) {
         for (let k = i + fence; k < close; k++) push(source[k], k);
         spans.push({ start: i, end: close + fence });
@@ -142,7 +160,7 @@ export function stripInline(source: string): Stripped {
 
     // Link: keep the label, drop the destination.
     if (source[i] === '[') {
-      const close = matchingBracket(source, i);
+      const close = brackets.get(i) ?? -1;
       if (close !== -1) {
         const after = source[close + 1];
         if (after === '(' || after === '[') {
@@ -214,20 +232,22 @@ function snapToMarkup(
   return { start, end };
 }
 
-function matchingBracket(s: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < s.length; i++) {
+/** Opener offset to closer offset for every bracket pair, in one pass. */
+function bracketPairs(s: string): Map<number, number> {
+  const stack: number[] = [];
+  const pairs = new Map<number, number>();
+  for (let i = 0; i < s.length; i++) {
     if (s[i] === '\\') {
       i++;
       continue;
     }
-    if (s[i] === '[') depth++;
+    if (s[i] === '[') stack.push(i);
     else if (s[i] === ']') {
-      depth--;
-      if (depth === 0) return i;
+      const open = stack.pop();
+      if (open !== undefined) pairs.set(open, i);
     }
   }
-  return -1;
+  return pairs;
 }
 
 function matchingPair(s: string, open: number, o: string, c: string): number {

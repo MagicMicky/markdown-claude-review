@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import * as fsp from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveAnchor } from '../core/anchor.js';
@@ -7,7 +8,8 @@ import {
   DEFAULT_REVIEW_DIR,
   docRelPathFor,
   listReviewFiles,
-  readReview,
+  loadReview,
+  mergeReviewFiles,
   reviewPathFor,
   writeReview,
 } from '../core/store.js';
@@ -24,6 +26,14 @@ export interface DocState {
   file: ReviewFile;
   /** Live positions, keyed by thread id. Absent means the anchor did not resolve. */
   resolved: Map<string, ResolvedAnchor>;
+  /**
+   * Set when the file on disk could not be parsed. Writing is then refused:
+   * the sidecar is the only copy of that comment history, and overwriting it
+   * with an empty file would destroy it silently.
+   */
+  corrupt?: string;
+  /** Threads deleted here, so a merge does not resurrect them from disk. */
+  deleted: Set<string>;
 }
 
 /** A thread's live position in the document, for callers that only need geometry. */
@@ -44,8 +54,15 @@ export class Session implements vscode.Disposable {
   private readonly docs = new Map<string, DocState>();
   private readonly emitter = new vscode.EventEmitter<string | undefined>();
   private readonly reanchorEmitter = new vscode.EventEmitter<string>();
-  private reanchorDebounce?: NodeJS.Timeout;
+  /** One timer per document: a shared one let an edit in B cancel A's re-anchor. */
+  private readonly reanchorTimers = new Map<string, NodeJS.Timeout>();
   /** Paths we just wrote, so the file watcher does not echo our own changes back. */
+  /**
+   * Modification time of our own last write per file. Compared against the
+   * watcher event's mtime, which is exact — the previous three-second window
+   * discarded genuine external writes whenever VS Code coalesced them with
+   * ours, losing whatever Claude had just written.
+   */
   private readonly selfWrites = new Map<string, number>();
   private authorName = 'You';
   private disposables: vscode.Disposable[] = [];
@@ -83,7 +100,7 @@ export class Session implements vscode.Disposable {
       new vscode.RelativePattern(this.root, `${this.reviewDir}/**/*.review.json`),
     );
     const onExternal = async (uri: vscode.Uri) => {
-      if (this.wasSelfWrite(uri.fsPath)) return;
+      if (await this.wasSelfWrite(uri.fsPath)) return;
       const rel = docRelPathFor(this.root, this.reviewDir, uri.fsPath);
       await this.load(rel);
       this.emitter.fire(rel);
@@ -110,8 +127,9 @@ export class Session implements vscode.Disposable {
         if (e.document.languageId !== 'markdown' || e.contentChanges.length === 0) return;
         const rel = this.docRelPath(e.document.uri);
         if (!rel || !this.docs.has(rel)) return;
-        clearTimeout(this.reanchorDebounce);
-        this.reanchorDebounce = setTimeout(() => {
+        clearTimeout(this.reanchorTimers.get(rel));
+        this.reanchorTimers.set(rel, setTimeout(() => {
+          this.reanchorTimers.delete(rel);
           const state = this.docs.get(rel);
           if (!state) return;
           // Positions only. Statuses are not persisted mid-edit: a quote can be
@@ -119,7 +137,7 @@ export class Session implements vscode.Disposable {
           // 'stale' for that would outlive the edit.
           this.reanchor(state, e.document.getText());
           this.reanchorEmitter.fire(rel);
-        }, REANCHOR_DEBOUNCE_MS);
+        }, REANCHOR_DEBOUNCE_MS));
       }),
     );
 
@@ -180,8 +198,33 @@ export class Session implements vscode.Disposable {
   }
 
   private async load(docRelPath: string): Promise<DocState> {
-    const file = await readReview(this.reviewFilePath(docRelPath), docRelPath);
-    const state: DocState = { docRelPath, file, resolved: new Map() };
+    const previous = this.docs.get(docRelPath);
+    const loaded = await loadReview(this.reviewFilePath(docRelPath), docRelPath);
+
+    if (loaded.kind === 'corrupt') {
+      // Keep whatever we already had, refuse to write, and say so once.
+      const state: DocState = previous ?? {
+        docRelPath,
+        file: { version: 1, document: docRelPath, threads: [] },
+        resolved: new Map(),
+        deleted: new Set(),
+      };
+      if (state.corrupt !== loaded.reason) {
+        vscode.window.showErrorMessage(
+          `Comments for ${docRelPath} could not be read: ${loaded.reason}. They will not be modified until the file is fixed.`,
+        );
+      }
+      state.corrupt = loaded.reason;
+      this.docs.set(docRelPath, state);
+      return state;
+    }
+
+    const state: DocState = {
+      docRelPath,
+      file: loaded.file,
+      resolved: new Map(),
+      deleted: previous?.deleted ?? new Set(),
+    };
     this.docs.set(docRelPath, state);
     const text = await this.documentText(docRelPath);
     if (text !== undefined) this.reanchor(state, text);
@@ -240,9 +283,15 @@ export class Session implements vscode.Disposable {
     return changed;
   }
 
-  /** Re-resolve against current text and persist any status transitions. */
+  /**
+   * Reload from disk, re-resolve, and persist any status transitions.
+   *
+   * The reload matters: this is the documented recovery for a missed watcher
+   * event, and it used to re-anchor the cached copy and save it — writing stale
+   * data over whatever had actually changed on disk.
+   */
   async refresh(docRelPath: string): Promise<void> {
-    const state = await this.ensure(docRelPath);
+    const state = await this.load(docRelPath);
     const text = await this.documentText(docRelPath);
     if (text === undefined) return;
     const changed = this.reanchor(state, text, true);
@@ -257,9 +306,30 @@ export class Session implements vscode.Disposable {
   async save(docRelPath: string): Promise<void> {
     const state = this.docs.get(docRelPath);
     if (!state) return;
+    if (state.corrupt) {
+      vscode.window.showErrorMessage(
+        `Not saving comments for ${docRelPath}: its file is unreadable (${state.corrupt}).`,
+      );
+      return;
+    }
+
     const file = this.reviewFilePath(docRelPath);
-    this.selfWrites.set(file, Date.now());
-    await writeReview(file, state.file);
+    // Re-read immediately before writing and merge. Another process — the MCP
+    // server — holds and rewrites this same file, and without this whoever
+    // writes second silently reverts the other.
+    const current = await loadReview(file, docRelPath);
+    if (current.kind === 'corrupt') {
+      state.corrupt = current.reason;
+      vscode.window.showErrorMessage(
+        `Not saving comments for ${docRelPath}: its file became unreadable (${current.reason}).`,
+      );
+      return;
+    }
+    state.file = mergeReviewFiles(state.file, current.file, state.deleted);
+    state.deleted.clear();
+
+    const mtime = await writeReview(file, state.file);
+    this.selfWrites.set(file, mtime);
     this.emitter.fire(docRelPath);
   }
 
@@ -281,19 +351,23 @@ export class Session implements vscode.Disposable {
     return undefined;
   }
 
-  private wasSelfWrite(file: string): boolean {
-    const at = this.selfWrites.get(file);
-    if (at === undefined) return false;
-    if (Date.now() - at > 3000) {
-      this.selfWrites.delete(file);
-      return false;
+  private async wasSelfWrite(file: string): Promise<boolean> {
+    const ours = this.selfWrites.get(file);
+    if (ours === undefined) return false;
+    try {
+      const stat = await fsp.stat(file);
+      if (stat.mtimeMs === ours) return true;
+    } catch {
+      /* gone; treat as external */
     }
+    // Someone else has written since; stop attributing events to us.
     this.selfWrites.delete(file);
-    return true;
+    return false;
   }
 
   dispose(): void {
-    clearTimeout(this.reanchorDebounce);
+    for (const t of this.reanchorTimers.values()) clearTimeout(t);
+    this.reanchorTimers.clear();
     this.disposables.forEach((d) => d.dispose());
     this.emitter.dispose();
     this.reanchorEmitter.dispose();

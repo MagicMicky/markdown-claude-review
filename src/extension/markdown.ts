@@ -5,7 +5,7 @@ import MarkdownIt from 'markdown-it';
 // they would if highlight.js did not recognise them.
 import hljs from 'highlight.js/lib/common';
 import type { BlockRange } from '../core/rendermap.js';
-import { blockRange } from '../core/rendermap.js';
+import { blockRange, lineOffsets } from '../core/rendermap.js';
 import type { PreviewSettings } from './config.js';
 
 /**
@@ -88,6 +88,8 @@ export function createEngine(settings: PreviewSettings): MarkdownIt {
 export function render(source: string, opts: RenderOptions): Rendered {
   const md = createEngine(opts.settings);
   const blocks: RenderedBlock[] = [];
+  // Once for the document, not once per block.
+  const offsets = lineOffsets(source);
 
   // Source-map attributes, applied last so nothing downstream strips them.
   md.core.ruler.push('mdreview_source_map', (state) => {
@@ -95,7 +97,7 @@ export function render(source: string, opts: RenderOptions): Rendered {
       if (!token.map || token.type === 'inline') continue;
       const [startLine, endLine] = token.map;
       const index = blocks.length;
-      blocks.push({ index, ...blockRange(source, startLine, endLine) });
+      blocks.push({ index, ...blockRange(source, startLine, endLine, offsets) });
       token.attrSet('data-line', String(startLine));
       token.attrSet('data-line-end', String(endLine));
       token.attrSet('data-block', String(index));

@@ -49,7 +49,11 @@ export class Preview implements vscode.Disposable {
       localResourceRoots: this.resourceRoots(),
     };
     panel.webview.html = this.html();
-    panel.webview.onDidReceiveMessage((m: ViewMessage) => void this.handle(m), null, this.disposables);
+    panel.webview.onDidReceiveMessage(
+      (m: ViewMessage) => void this.dispatch(m),
+      null,
+      this.disposables,
+    );
 
     this.disposables.push(
       session.onDidChange((doc) => {
@@ -285,6 +289,18 @@ export class Preview implements vscode.Disposable {
       .map((href) => `<link rel="stylesheet" href="${href}">`)
       .join('\n');
 
+    // markdown.css gates real behaviour on these, exactly as the built-in
+    // preview does. Without `showEditorSelection` the marker that shows where
+    // the editor's cursor is has no styling at all and silently never appears.
+    const editorConfig = vscode.workspace.getConfiguration('editor', this.uri());
+    const bodyClasses = [
+      settings.markEditorSelection ? 'showEditorSelection' : '',
+      editorConfig.get('scrollBeyondLastLine', true) ? 'scrollBeyondLastLine' : '',
+      editorConfig.get<string>('wordWrap', 'off') !== 'off' ? 'wordWrap' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
     return `<!DOCTYPE html>
 <html lang="en" style="${rootStyle}">
 <head>
@@ -295,7 +311,7 @@ ${links}
 <link rel="stylesheet" href="${asset('media', 'preview.css')}">
 <title>${escapeHtml(this.docRelPath)}</title>
 </head>
-<body class="vscode-body">
+<body class="vscode-body ${bodyClasses}">
   <div id="doc" class="markdown-body" dir="auto"></div>
   <div id="margin" class="margin"></div>
   <button id="add" class="add-comment" hidden>Comment</button>
@@ -308,6 +324,23 @@ ${links}
 
   private ack(opId: string, ok: boolean, message = ''): void {
     this.post(ok ? { type: 'ack', opId, ok: true } : { type: 'ack', opId, ok: false, message });
+  }
+
+  /**
+   * Every inbound message, with failures reported back.
+   *
+   * Without this, a rejected write (EACCES, ENOSPC, a failed rename) meant no
+   * ack was ever sent, so the bubble's buttons stayed disabled for the life of
+   * the panel and the reply the user had typed was already gone.
+   */
+  private async dispatch(m: ViewMessage): Promise<void> {
+    try {
+      await this.handle(m);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if ('opId' in m && typeof m.opId === 'string') this.ack(m.opId, false, message);
+      vscode.window.showErrorMessage(`Markdown Review: ${message}`);
+    }
   }
 
   private async handle(m: ViewMessage): Promise<void> {
@@ -434,9 +467,36 @@ ${links}
         return;
       }
 
-      case 'openLink':
-        await vscode.env.openExternal(vscode.Uri.parse(m.href));
+      case 'openLink': {
+        // Only real external schemes go to the OS. Everything else resolves
+        // against the document and opens in the editor — which is both what the
+        // built-in preview does and what stops a hostile document handing an
+        // arbitrary URI to whatever has registered a handler for it.
+        if (/^(https?|mailto):/i.test(m.href)) {
+          await vscode.env.openExternal(vscode.Uri.parse(m.href));
+          return;
+        }
+        if (/^[a-z][a-z0-9+.-]*:/i.test(m.href)) {
+          vscode.window.showWarningMessage(`Refusing to open a "${m.href.split(':')[0]}:" link.`);
+          return;
+        }
+        const [rel, fragment] = m.href.split('#');
+        const target = rel
+          ? vscode.Uri.joinPath(vscode.Uri.joinPath(this.uri(), '..'), ...rel.split('/'))
+          : this.uri();
+        if (!this.session.docRelPath(target)) {
+          vscode.window.showWarningMessage('That link points outside the workspace.');
+          return;
+        }
+        try {
+          await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target), {
+            viewColumn: vscode.ViewColumn.One,
+          });
+        } catch {
+          vscode.window.showWarningMessage(`Could not open ${rel || fragment}.`);
+        }
         return;
+      }
 
       case 'setStatuses':
         await this.memento.update(STATUS_KEY, m.statuses);

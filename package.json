@@ -233,17 +233,20 @@
         "mdreview.reviewDir": {
           "type": "string",
           "default": ".review",
-          "description": "Directory (relative to the workspace root) where comment threads and review requests are stored."
+          "description": "Directory (relative to the workspace root) where comment threads and review requests are stored.",
+          "scope": "machine"
         },
         "mdreview.author": {
           "type": "string",
           "default": "",
-          "description": "Name recorded as the author of your comments. Defaults to your git user.name, else 'You'."
+          "description": "Name recorded as the author of your comments. Defaults to your git user.name, else 'You'.",
+          "scope": "machine"
         },
         "mdreview.terminalName": {
           "type": "string",
           "default": "claude",
-          "description": "Substring used to find the Claude Code terminal when sending a review."
+          "description": "Substring used to find the Claude Code terminal when sending a review.",
+          "scope": "machine"
         },
         "mdreview.highlightCommentedRanges": {
           "type": "boolean",
@@ -258,7 +261,9 @@
         "mdreview.sendPrompt": {
           "type": "string",
           "default": "/review",
-          "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger."
+          "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger.",
+          "scope": "machine",
+          "markdownDescription": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger. Machine-scoped: it is typed into a terminal, so a workspace must not be able to set it."
         },
         "mdreview.inlineThreads": {
           "type": "string",
@@ -318,5 +323,11 @@
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.3"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Comment threads are read from files in the workspace, and the review hand-off types a configurable line into a terminal."
+    }
   }
 }

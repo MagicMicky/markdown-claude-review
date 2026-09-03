@@ -342,7 +342,6 @@ function renderBubble(card: CardVM, sig: string, now: number): HTMLElement {
 
   const head = el('div', 'bubble-head');
   head.append(
-    el('span', 'dot'),
     el('span', 'who', card.messages[0]?.authorName ?? state.author),
     el('span', 'spacer'),
     el('span', 'muted', relativeTime(card.updatedAt, now)),
@@ -441,7 +440,7 @@ function renderComposer(draft: Draft): HTMLElement {
   node.dataset.composer = '';
 
   const head = el('div', 'bubble-head');
-  head.append(el('span', 'dot'), el('span', 'who', state.author));
+  head.append(el('span', 'who', state.author));
   node.append(head);
   node.append(el('blockquote', 'quote', draft.quote));
   if (draft.lost) node.append(el('div', 'note error', draft.lost));
@@ -571,6 +570,20 @@ for (const event of ['mouseup', 'keyup', 'touchend'] as const) {
   });
 }
 
+/** The thread whose highlighted passage covers a viewport point, if any. */
+function threadAtPoint(x: number, y: number): string | null {
+  let best: { id: string; area: number } | null = null;
+  for (const [id, range] of state.ranges) {
+    for (const rect of Array.from(range.getClientRects())) {
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+      const area = rect.width * rect.height;
+      // Innermost wins, matching how the editor picks between nested comments.
+      if (!best || area < best.area) best = { id, area };
+    }
+  }
+  return best?.id ?? null;
+}
+
 /** The rendered block a DOM node sits in, if any. */
 function blockOf(node: Node): Element | null {
   const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
@@ -676,6 +689,15 @@ function topVisibleLine(): number {
 }
 
 doc.addEventListener('click', (e) => {
+  // A highlight drawn with the CSS Custom Highlight API is not an element, so
+  // hit-test the live ranges rather than looking for something under the mouse.
+  if (!(e.target as HTMLElement).closest('a')) {
+    const hit = threadAtPoint(e.clientX, e.clientY);
+    // Clicking plain prose clears the active thread. Without this the
+    // highlight from the last comment stays lit while you read elsewhere.
+    if (hit !== state.activeId) activate(hit, true);
+  }
+
   const link = (e.target as HTMLElement).closest('a');
   if (!link) return;
   const href = link.getAttribute('href');

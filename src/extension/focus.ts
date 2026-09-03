@@ -69,7 +69,13 @@ export class FocusTracker implements vscode.Disposable {
   }
 
   private recompute(): void {
-    if (Date.now() < this.suppressUntil) return;
+    if (Date.now() < this.suppressUntil) {
+      // Retry rather than drop it. Returning here meant a cursor move landing
+      // inside the echo window left the active thread stale until something
+      // else happened to move the selection again.
+      this.schedule();
+      return;
+    }
 
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'markdown') {

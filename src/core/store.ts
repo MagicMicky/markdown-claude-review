@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import {
@@ -30,37 +29,125 @@ function emptyFile(docRelPath: string): ReviewFile {
   return { version: REVIEW_FILE_VERSION, document: docRelPath, threads: [] };
 }
 
-export function readReviewSync(file: string, docRelPath: string): ReviewFile {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as ReviewFile;
-    if (!parsed || !Array.isArray(parsed.threads)) return emptyFile(docRelPath);
-    parsed.document ??= docRelPath;
-    return parsed;
-  } catch {
-    return emptyFile(docRelPath);
-  }
+/**
+ * The outcome of loading a review file.
+ *
+ * `missing` and `corrupt` must never be conflated. Treating an unreadable file
+ * as empty means the next write erases every comment in it — the file is the
+ * only copy of that history.
+ */
+export type ReviewLoad =
+  | { kind: 'ok'; file: ReviewFile }
+  | { kind: 'missing'; file: ReviewFile }
+  | { kind: 'corrupt'; reason: string };
+
+function isThread(t: unknown): t is Thread {
+  if (typeof t !== 'object' || t === null) return false;
+  const x = t as Record<string, unknown>;
+  const anchor = x.anchor as Record<string, unknown> | undefined;
+  return (
+    typeof x.id === 'string' &&
+    typeof x.status === 'string' &&
+    Array.isArray(x.messages) &&
+    typeof anchor === 'object' &&
+    anchor !== null &&
+    typeof anchor.quote === 'string' &&
+    Array.isArray(anchor.headingPath)
+  );
 }
 
-export async function readReview(file: string, docRelPath: string): Promise<ReviewFile> {
+export async function loadReview(file: string, docRelPath: string): Promise<ReviewLoad> {
+  let raw: string;
   try {
-    const parsed = JSON.parse(await fsp.readFile(file, 'utf8')) as ReviewFile;
-    if (!parsed || !Array.isArray(parsed.threads)) return emptyFile(docRelPath);
-    parsed.document ??= docRelPath;
-    return parsed;
-  } catch {
-    return emptyFile(docRelPath);
+    raw = await fsp.readFile(file, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { kind: 'missing', file: emptyFile(docRelPath) };
+    }
+    return { kind: 'corrupt', reason: (e as Error).message };
   }
+  if (raw.trim() === '') return { kind: 'missing', file: emptyFile(docRelPath) };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { kind: 'corrupt', reason: `not valid JSON (${(e as Error).message})` };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { kind: 'corrupt', reason: 'does not contain a JSON object' };
+  }
+
+  const obj = parsed as Partial<ReviewFile>;
+  if (!Array.isArray(obj.threads)) return { kind: 'corrupt', reason: 'has no threads array' };
+
+  // A structurally broken thread used to reach resolveAnchor and throw, which
+  // killed activate() before a single command was registered.
+  const bad = obj.threads.findIndex((t) => !isThread(t));
+  if (bad !== -1) return { kind: 'corrupt', reason: `thread ${bad} is missing required fields` };
+
+  return {
+    kind: 'ok',
+    file: { version: obj.version ?? REVIEW_FILE_VERSION, document: obj.document ?? docRelPath, threads: obj.threads },
+  };
+}
+
+/**
+ * Combine our in-memory threads with whatever is on disk now.
+ *
+ * Both this extension and the MCP server hold a whole review file and write it
+ * back, from different processes. Without this, whoever writes second silently
+ * reverts the other — a reply from Claude, or a resolve from the reviewer.
+ *
+ * `deleted` carries ids this side removed on purpose, so a thread the other
+ * side still has does not come back from the dead.
+ */
+export function mergeReviewFiles(
+  mine: ReviewFile,
+  onDisk: ReviewFile,
+  deleted: ReadonlySet<string> = new Set(),
+): ReviewFile {
+  const byId = new Map<string, Thread>();
+  for (const t of onDisk.threads) if (!deleted.has(t.id)) byId.set(t.id, t);
+
+  for (const ours of mine.threads) {
+    const theirs = byId.get(ours.id);
+    if (!theirs) {
+      byId.set(ours.id, ours);
+      continue;
+    }
+    // Messages only ever accumulate, so union them by id.
+    const messages = new Map<string, Message>();
+    for (const m of theirs.messages) messages.set(m.id, m);
+    for (const m of ours.messages) messages.set(m.id, m);
+
+    // Everything else is last-writer-wins on the thread's own timestamp.
+    const newer = ours.updatedAt >= theirs.updatedAt ? ours : theirs;
+    byId.set(ours.id, {
+      ...newer,
+      messages: [...messages.values()].sort((a, b) => a.ts.localeCompare(b.ts)),
+    });
+  }
+
+  return {
+    version: mine.version,
+    document: mine.document,
+    threads: [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+  };
 }
 
 /**
  * Write via temp file + rename. The extension watches this path, and Claude
  * writes it from another process; a torn read would drop comment history.
  */
-export async function writeReview(file: string, data: ReviewFile): Promise<void> {
+export async function writeReview(file: string, data: ReviewFile): Promise<number> {
   await fsp.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
   await fsp.rename(tmp, file);
+  // The resulting mtime identifies this write, so a file watcher can tell our
+  // own change from someone else's without guessing from a time window.
+  return (await fsp.stat(file)).mtimeMs;
 }
 
 /** Every review file under the review dir, recursively. */

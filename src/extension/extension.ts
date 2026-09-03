@@ -250,7 +250,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       .getConfiguration('mdreview')
       .get('terminalName', 'claude')
       .toLowerCase();
-    const terminal = vscode.window.terminals.find((t) => t.name.toLowerCase().includes(needle));
+    // `includes('')` is true for every terminal, so an empty setting would type
+    // the prompt into whichever shell happened to be first.
+    const terminal = needle
+      ? vscode.window.terminals.find((t) => t.name.toLowerCase().includes(needle))
+      : undefined;
     // Nothing more than what you would type yourself. Claude reads the comments
     // through the MCP server, so there is no digest to hand over.
     const line = vscode.workspace.getConfiguration('mdreview').get('sendPrompt', '/review');
