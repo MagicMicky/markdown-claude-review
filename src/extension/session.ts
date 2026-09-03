@@ -47,7 +47,7 @@ export interface ThreadSpan {
 /**
  * Owns every review file in the workspace: reads, writes, and keeps anchors
  * resolved against current document text. Every surface — the inline comment
- * threads, the decorations, the sidebar — is a projection of this, and every
+ * threads, the decorations, the preview — is a projection of this, and every
  * mutation goes through `update()` so all of them observe the same events.
  */
 export class Session implements vscode.Disposable {

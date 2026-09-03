@@ -32,7 +32,7 @@ export class ReviewActions {
    * The anchor is built at the moment the command ran, not when the body is
    * submitted, so moving the selection while typing cannot silently re-point
    * the comment. Held in memory only: a window reload loses these, which the
-   * sidebar reports rather than guessing.
+   * preview reports rather than guessing.
    */
   private readonly drafts = new Map<string, PendingDraft>();
 
