@@ -329,7 +329,7 @@
     "esbuild": "^0.28.2",
     "jsdom": "^25.0.1",
     "ovsx": "^1.1.1",
-    "typescript": "^5.6.3"
+    "typescript": "^7.0.2"
   },
   "capabilities": {
     "untrustedWorkspaces": {
