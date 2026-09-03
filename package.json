@@ -323,7 +323,7 @@
   },
   "devDependencies": {
     "@types/jsdom": "^21.1.7",
-    "@types/node": "^22.9.0",
+    "@types/node": "^26.4.0",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
