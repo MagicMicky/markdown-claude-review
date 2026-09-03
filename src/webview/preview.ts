@@ -551,7 +551,7 @@ function cancelDraft(): void {
  * ------------------------------------------------------------------ */
 
 let selectionTimer: number | undefined;
-let pendingSelection: { block: number; text: string } | null = null;
+let pendingSelection: { blockStart: number; blockEnd: number; text: string } | null = null;
 
 // Hide eagerly when the selection collapses, but only *show* once the gesture
 // has finished — chasing the pointer through a drag is what made selecting feel
@@ -571,6 +571,13 @@ for (const event of ['mouseup', 'keyup', 'touchend'] as const) {
   });
 }
 
+/** The rendered block a DOM node sits in, if any. */
+function blockOf(node: Node): Element | null {
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const block = el?.closest('[data-block]') ?? null;
+  return block && doc.contains(block) ? block : null;
+}
+
 function evaluateSelection(): void {
   const sel = window.getSelection();
   const text = sel?.toString() ?? '';
@@ -580,18 +587,24 @@ function evaluateSelection(): void {
     return;
   }
   const range = sel.getRangeAt(0);
-  const container =
-    range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-      ? (range.commonAncestorContainer as Element)
-      : range.commonAncestorContainer.parentElement;
-  const block = container?.closest('[data-block]');
-  if (!block || !doc.contains(block)) {
+  // Resolve the endpoints, not the common ancestor. A triple-click selects the
+  // paragraph plus its trailing newline, which lifts the common ancestor to a
+  // container with no data-block — and the button would silently never appear.
+  const startBlock = blockOf(range.startContainer);
+  const endBlock = blockOf(range.endContainer) ?? startBlock;
+  if (!startBlock) {
     addButton.hidden = true;
     pendingSelection = null;
     return;
   }
 
-  pendingSelection = { block: Number(block.getAttribute('data-block')), text };
+  const a = Number(startBlock.getAttribute('data-block'));
+  const b = Number((endBlock ?? startBlock).getAttribute('data-block'));
+  pendingSelection = {
+    blockStart: Math.min(a, b),
+    blockEnd: Math.max(a, b),
+    text,
+  };
   const rect = range.getBoundingClientRect();
   addButton.hidden = false;
   addButton.style.top = `${rect.bottom + window.scrollY + 6}px`;

@@ -66,11 +66,12 @@ export type HostMessage =
 export type ViewMessage =
   | { type: 'ready'; knownDraftIds: string[] }
   /**
-   * A selection the user wants to comment on. `block` identifies the rendered
-   * block; `text` is what they selected. The host maps it to source offsets —
-   * the webview deliberately has no idea where that is in the file.
+   * A selection the user wants to comment on. `blockStart`/`blockEnd` bracket
+   * the rendered blocks it covers — a triple-click or a drag across paragraphs
+   * spans more than one — and `text` is what they selected. The host maps it to
+   * source offsets; the webview has no idea where that is in the file.
    */
-  | { type: 'startCompose'; block: number; text: string }
+  | { type: 'startCompose'; blockStart: number; blockEnd: number; text: string }
   | { type: 'createThread'; opId: string; draftId: string; body: string }
   | { type: 'cancelDraft'; draftId: string }
   | { type: 'reply'; opId: string; threadId: string; body: string }

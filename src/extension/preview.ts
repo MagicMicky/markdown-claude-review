@@ -327,11 +327,20 @@ ${links}
 
       case 'startCompose': {
         const text = await this.sourceText();
-        const block = this.blocks[m.block];
-        if (!block) {
+        const first = this.blocks[m.blockStart];
+        const last = this.blocks[m.blockEnd] ?? first;
+        if (!first) {
           vscode.window.showWarningMessage('Could not tell which part of the document that was.');
           return;
         }
+        // One search window covering every block the selection touched, so a
+        // sentence spanning two paragraphs still resolves.
+        const block = {
+          startLine: first.startLine,
+          endLine: last.endLine,
+          start: first.start,
+          end: Math.max(first.end, last.end),
+        };
         const range = locateInSource(text, block, m.text);
         if (!range) return;
         const anchor = buildAnchor(text, range.start, range.end);
@@ -341,7 +350,7 @@ ${links}
         this.post({
           type: 'compose',
           draftId,
-          block: m.block,
+          block: m.blockStart,
           needle: renderedNeedle(text, range),
           quote,
           headingPath: anchor.headingPath,
