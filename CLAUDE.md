@@ -33,13 +33,22 @@ Press `F5` in VS Code to launch an Extension Development Host.
 | --- | --- |
 | `src/core/` | Everything with no VS Code dependency. All tests live against this. |
 | `src/extension/` | The VS Code UI layer. Untested — no extension-host harness. |
+| `src/webview/` | The comment sidebar's script, bundled to `dist/webview.js`. |
 | `src/mcp/` | The stdio MCP server Claude Code talks to. |
 | `src/test/` | `node:test` suites, `src/core` only. |
+| `media/` | Static webview assets. Shipped as-is; do not add them to `.vscodeignore`. |
 
-**`src/core/` must never import `vscode`.** Both bundles depend on it, and it is the
-only part that can be tested. When logic is worth testing, that is where it goes —
-`mergeMcpConfig` and `sectionText` were pulled out of the extension for exactly that
-reason.
+**`src/core/` must never import `vscode`.** All three bundles depend on it, and it is
+the only part that can be tested. When logic is worth testing, that is where it goes —
+`mergeMcpConfig`, `sectionText` and the sidebar view-model were pulled out of the
+extension for exactly that reason.
+
+**`src/webview/` must never import `vscode` or `node:*`, and neither may anything in
+`src/core/` that it pulls in.** `src/core/store.ts` imports `node:fs`, so a stray
+re-export would reach the webview. The webview's esbuild target uses
+`platform: 'browser'` so that fails the build instead of showing a blank panel. It is
+typechecked separately (`tsconfig.webview.json`) because it needs `lib: ["DOM"]`, which
+must not leak into the root project.
 
 ## Invariants worth not breaking
 
@@ -63,6 +72,22 @@ call sites; a test asserts every rule reaches the prose form.
 
 **Writes are atomic.** `writeReview` goes through a temp file and a rename, because the
 extension and the MCP server write the same JSON from different processes.
+
+**Every mutation goes through `ReviewActions`, and every surface is a subscriber.** The
+inline threads, the decorations and the sidebar all render `Session` and post commands
+back; none of them owns state or calls another. That is what keeps them in sync, and
+what lets `inlineThreads: 'off'` dispose the whole comment controller without taking
+any command with it. Two events, not one: `onDidChange` for thread content,
+`onDidReanchor` for offsets moving while typing.
+
+**Never reassign a `CommentThread.collapsibleState` on update.** Set it at creation and
+in the reveal path only. Reassigning on every fan-out snaps a thread the user just
+expanded shut the next time anything changes — which, with the collapsed default, is
+any keystroke.
+
+**The webview never uses `innerHTML`.** Comment bodies are written by another process
+into a JSON file; `src/webview/render.ts` is where that text meets a DOM, and it goes
+through `textContent` only. Markdown is deliberately not rendered there.
 
 **Config merges never clobber.** `mergeMcpConfig` refuses to write when an existing
 `.mcp.json` does not parse, rather than replacing a file that may hold other servers.

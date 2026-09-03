@@ -26,6 +26,17 @@ const builds = [
     format: 'cjs',
     banner: { js: '#!/usr/bin/env node' },
   },
+  {
+    // The sidebar webview. platform:'browser' is load-bearing: src/core is
+    // shared with the extension, and something there reaching node:fs would
+    // otherwise fail as a blank panel at runtime instead of a build error.
+    ...common,
+    entryPoints: ['src/webview/main.ts'],
+    outfile: 'dist/webview.js',
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2020',
+  },
 ];
 
 if (watch) {

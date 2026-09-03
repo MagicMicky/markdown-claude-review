@@ -51,18 +51,46 @@ setup command on their own machine.
 
 ## Using it
 
+Comments live in a **Comments sidebar** — Docs-style bubbles under the
+**Markdown Review** icon in the activity bar. The editor itself only ever shows a
+gutter marker and an underline, so your prose never moves.
+
 | Action | How |
 | --- | --- |
-| Comment | Select text in a `.md` file, click the `+` in the gutter, type, submit |
-| Reply | Type in the thread's reply box |
-| Resolve | Check icon in the thread title bar |
-| See every thread, including resolved | **Markdown Review** icon in the activity bar |
-| Hand off to Claude | Type `/review` in Claude Code — or the send icon in the panel, which types it for you |
-| Force a re-scan | **Markdown Review: Refresh Threads** from the palette, if state ever looks stale |
-| Re-attach a stale comment | Select the new text, then **Re-attach** on the thread in the panel |
+| Comment | Select text, press `Ctrl+Alt+M` (`Cmd+Alt+M`), type, `Ctrl+Enter` |
+| Reply | Click a card, type in its reply box, `Ctrl+Enter` |
+| Resolve | **Resolve** on the card |
+| Jump between comments | **Next / Previous Comment** from the palette |
+| Filter | Status chips and the `This document` / `All` toggle in the sidebar header |
+| Search | `/` in the sidebar, or the magnifier |
+| Re-attach a stale comment | Select the new text, then **Re-attach to selection** on the card |
+| Hand off to Claude | Type `/review` in Claude Code — or **Send N to Claude** in the sidebar |
+
+Clicking a card selects its passage in the editor; moving the cursor into a commented
+passage expands its card and scrolls it into view. That coordinated pair is what ties
+the two together — VS Code exposes no line geometry to a webview, so a card cannot be
+pixel-aligned to its text, and pretending otherwise would drift with word wrap and
+folding.
+
+Keyboard in the sidebar: `↑`/`↓` or `j`/`k` to move, `Enter` to jump to the passage,
+`r` to reply, `/` to search.
 
 Open the built-in markdown preview beside the editor (`Ctrl+K V`) to read the rendered
 document while commenting on the source.
+
+### The inline layer
+
+Threads still exist in the editor, collapsed. Click a gutter marker to open one in
+place. `mdreview.inlineThreads` controls this:
+
+| Value | Editor shows |
+| --- | --- |
+| `collapsed` (default) | A gutter marker and an underline. Nothing displaces prose. |
+| `expanded` | Threads open inline, pushing text down. |
+| `off` | Nothing but the underline. The sidebar is the only surface. |
+
+Both surfaces are projections of the same state, so a reply typed in either appears in
+the other immediately.
 
 ### Thread states
 
@@ -201,12 +229,15 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 | `mdreview.sendPrompt` | `/review` | What the Send Review button types for you |
 | `mdreview.highlightCommentedRanges` | `true` | Underline commented passages |
 | `mdreview.fuzzyThreshold` | `0.62` | Similarity needed to re-attach to rewritten prose |
+| `mdreview.inlineThreads` | `collapsed` | How threads appear in the editor: `collapsed`, `expanded`, `off` |
+| `mdreview.sidebar.defaultScope` | `document` | Whether the sidebar opens on this document or the workspace |
+| `mdreview.sidebar.showResolved` | `false` | Whether resolved comments show on first open |
 
 ## Development
 
 ```sh
 npm run watch      # rebuild on change
-npm test           # anchoring, context, store and guidance tests
+npm test           # anchoring, context, store, guidance and sidebar view-model tests
 npm run typecheck
 ```
 

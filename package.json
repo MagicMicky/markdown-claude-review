@@ -36,7 +36,8 @@
     "markdown-review-mcp": "./dist/mcp.js"
   },
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onView:mdreview.comments"
   ],
   "contributes": {
     "commands": [
@@ -49,6 +50,12 @@
         "command": "mdreview.replyThread",
         "title": "Reply",
         "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.commentOnSelection",
+        "title": "Add Comment on Selection",
+        "category": "Markdown Review",
+        "icon": "$(comment-add)"
       },
       {
         "command": "mdreview.resolveThread",
@@ -69,12 +76,6 @@
         "icon": "$(trash)"
       },
       {
-        "command": "mdreview.sendToClaude",
-        "title": "Send Review to Claude Code",
-        "category": "Markdown Review",
-        "icon": "$(send)"
-      },
-      {
         "command": "mdreview.reattachThread",
         "title": "Re-attach Stale Thread to Selection",
         "category": "Markdown Review",
@@ -86,8 +87,31 @@
         "category": "Markdown Review"
       },
       {
+        "command": "mdreview.nextThread",
+        "title": "Next Comment",
+        "category": "Markdown Review",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "mdreview.previousThread",
+        "title": "Previous Comment",
+        "category": "Markdown Review",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "mdreview.toggleInlineThreads",
+        "title": "Toggle Inline Comment Threads",
+        "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.sendToClaude",
+        "title": "Send Review to Claude Code",
+        "category": "Markdown Review",
+        "icon": "$(send)"
+      },
+      {
         "command": "mdreview.setupClaude",
-        "title": "Set Up Claude Code Integration (.mcp.json)",
+        "title": "Set Up Claude Code Integration",
         "category": "Markdown Review"
       },
       {
@@ -109,8 +133,9 @@
     "views": {
       "mdreview": [
         {
-          "id": "mdreview.threads",
-          "name": "Comment Threads"
+          "id": "mdreview.comments",
+          "name": "Comments",
+          "type": "webview"
         }
       ]
     },
@@ -143,6 +168,18 @@
         {
           "command": "mdreview.reattachThread",
           "when": "false"
+        },
+        {
+          "command": "mdreview.commentOnSelection",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.nextThread",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.previousThread",
+          "when": "editorLangId == markdown"
         }
       ],
       "comments/commentThread/context": [
@@ -178,29 +215,19 @@
         {
           "command": "mdreview.sendToClaude",
           "group": "navigation@1",
-          "when": "view == mdreview.threads"
+          "when": "view == mdreview.comments"
         },
         {
           "command": "mdreview.refresh",
           "group": "navigation@2",
-          "when": "view == mdreview.threads"
+          "when": "view == mdreview.comments"
         }
       ],
-      "view/item/context": [
+      "editor/context": [
         {
-          "command": "mdreview.reattachThread",
-          "group": "inline@1",
-          "when": "view == mdreview.threads && viewItem == thread.stale"
-        },
-        {
-          "command": "mdreview.resolveThread",
-          "group": "inline@2",
-          "when": "view == mdreview.threads && viewItem =~ /^thread\\.(open|answered|stale)$/"
-        },
-        {
-          "command": "mdreview.unresolveThread",
-          "group": "inline@2",
-          "when": "view == mdreview.threads && viewItem == thread.resolved"
+          "command": "mdreview.commentOnSelection",
+          "group": "1_modification@1",
+          "when": "editorLangId == markdown"
         }
       ]
     },
@@ -225,7 +252,7 @@
         "mdreview.highlightCommentedRanges": {
           "type": "boolean",
           "default": true,
-          "description": "Show a subtle highlight behind text that has comment threads attached."
+          "description": "Underline commented passages in the editor, and highlight the one the cursor is in."
         },
         "mdreview.fuzzyThreshold": {
           "type": "number",
@@ -236,14 +263,51 @@
           "type": "string",
           "default": "/review",
           "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger."
+        },
+        "mdreview.inlineThreads": {
+          "type": "string",
+          "enum": [
+            "collapsed",
+            "expanded",
+            "off"
+          ],
+          "default": "collapsed",
+          "enumDescriptions": [
+            "A gutter marker and an underline. Never displaces prose; click the marker to open a thread in place.",
+            "Threads open inline, pushing the surrounding text down.",
+            "No inline threads at all. The Comments sidebar is the only surface."
+          ],
+          "description": "How comment threads appear in the editor itself. The Comments sidebar is unaffected."
+        },
+        "mdreview.sidebar.defaultScope": {
+          "type": "string",
+          "enum": [
+            "document",
+            "workspace"
+          ],
+          "default": "document",
+          "description": "Whether the sidebar starts showing comments on the active document or across the workspace."
+        },
+        "mdreview.sidebar.showResolved": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether resolved comments are shown when the sidebar first opens."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "mdreview.commentOnSelection",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorTextFocus && editorLangId == markdown"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "test": "node --test dist-test/test/*.test.js",
     "pretest": "tsc -p tsconfig.test.json",
     "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies -o markdown-claude-review.vsix"
