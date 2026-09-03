@@ -88,8 +88,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     { dispose: () => ui?.dispose() },
   );
 
+  /**
+   * VS Code's own preview buttons hide themselves when `hasCustomMarkdownPreview`
+   * is set — an escape hatch for extensions that provide their own preview.
+   * Without it ours sits beside theirs looking like a duplicate, and worse, the
+   * buttons and the keybindings would open different previews.
+   *
+   * `mdreview.replacesPreview` gates our own title-bar button and keybindings on
+   * the same setting, so turning it off genuinely hands the built-in preview back
+   * rather than leaving a half-replaced state.
+   */
+  const applyPreviewOwnership = () => {
+    const owns = vscode.workspace
+      .getConfiguration('mdreview')
+      .get('replaceBuiltInPreview', true);
+    void vscode.commands.executeCommand('setContext', 'hasCustomMarkdownPreview', owns);
+    void vscode.commands.executeCommand('setContext', 'mdreview.replacesPreview', owns);
+  };
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('mdreview.replaceBuiltInPreview')) applyPreviewOwnership();
+    }),
+    // Leave VS Code's preview alone once we are gone.
+    { dispose: () => void vscode.commands.executeCommand('setContext', 'hasCustomMarkdownPreview', false) },
+  );
+
   await session.init();
   applyInlineMode();
+  applyPreviewOwnership();
 
   /** Thread id from a webview/tree string, or from an inline thread's title bar. */
   const idFrom = (arg: unknown): string | undefined => {

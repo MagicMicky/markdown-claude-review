@@ -83,10 +83,14 @@ Three visual layers, deliberately distinct: every open thread tints its passage 
 a bar in the left margin tracks where the source editor's cursor is; and the thread you
 are actually in gets a strong tint and an expanded bubble.
 
-`Ctrl+K V` and `Ctrl+Shift+V` open ours. The built-in preview is still on
-**Markdown: Open Preview** in the command palette. VS Code does not let an extension
-remove another's title-bar buttons, so the built-in preview icons stay visible unless
-you hide them by right-clicking the editor title bar.
+Ours replaces the built-in preview: it takes `Ctrl+K V` and `Ctrl+Shift+V`, and VS
+Code's own preview buttons hide themselves so the title bar shows one preview icon
+rather than three. The built-in preview is still on **Markdown: Open Preview** in the
+command palette.
+
+Set `mdreview.replaceBuiltInPreview` to `false` to reverse all of that in one go — the
+built-in buttons and keybindings come back, and the review preview moves to
+**Markdown Review: Open Review Preview** in the palette.
 
 `mdreview.inlineThreads` controls the editor layer: `collapsed` (default), `expanded`
 if you want threads to open in place, or `off` for preview-only.
@@ -252,6 +256,7 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 
 | Setting | Default | |
 | --- | --- | --- |
+| `mdreview.replaceBuiltInPreview` | `true` | Hide VS Code's preview buttons and take `Ctrl+K V` |
 | `mdreview.inlineThreads` | `collapsed` | Editor layer: `collapsed`, `expanded`, `off` |
 | `mdreview.highlightCommentedRanges` | `true` | Underline commented passages in the editor |
 | `mdreview.fuzzyThreshold` | `0.62` | Similarity needed to re-attach to rewritten prose |

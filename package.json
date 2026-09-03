@@ -223,7 +223,7 @@
         {
           "command": "mdreview.openPreviewToSide",
           "group": "navigation",
-          "when": "editorLangId == markdown"
+          "when": "editorLangId == markdown && mdreview.replacesPreview"
         }
       ]
     },
@@ -279,6 +279,11 @@
             "No inline threads. The editor shows only an underline and a gutter marker, and the review preview is where you comment."
           ],
           "description": "How comment threads appear in the source editor. The review preview is unaffected."
+        },
+        "mdreview.replaceBuiltInPreview": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Make the review preview *the* markdown preview: hide VS Code's own preview buttons from the editor title bar and take `Ctrl+K V` / `Ctrl+Shift+V`. Turn this off to get the built-in preview's buttons and keybindings back; the review preview is then on **Markdown Review: Open Review Preview** in the command palette."
         }
       }
     },
@@ -293,13 +298,13 @@
         "command": "mdreview.openPreviewToSide",
         "key": "ctrl+k v",
         "mac": "cmd+k v",
-        "when": "editorLangId == markdown"
+        "when": "editorLangId == markdown && mdreview.replacesPreview"
       },
       {
         "command": "mdreview.openPreview",
         "key": "ctrl+shift+v",
         "mac": "cmd+shift+v",
-        "when": "editorLangId == markdown"
+        "when": "editorLangId == markdown && mdreview.replacesPreview"
       }
     ]
   },
