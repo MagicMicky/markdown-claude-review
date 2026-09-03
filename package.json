@@ -319,7 +319,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "highlight.js": "^11.12.0",
-    "markdown-it": "^12.3.2",
+    "markdown-it": "^15.0.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
