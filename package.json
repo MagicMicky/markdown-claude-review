@@ -3,7 +3,7 @@
   "displayName": "Markdown Claude Review",
   "description": "Google-Docs-style comment threads on markdown, wired back to Claude Code over MCP.",
   "version": "0.1.0",
-  "publisher": "local",
+  "publisher": "magicmicky",
   "license": "MIT",
   "repository": {
     "type": "git",

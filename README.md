@@ -1,5 +1,7 @@
 # Markdown Claude Review
 
+[![CI](https://github.com/MagicMicky/markdown-claude-review/actions/workflows/ci.yml/badge.svg)](https://github.com/MagicMicky/markdown-claude-review/actions/workflows/ci.yml)
+
 Google-Docs-style comment threads on markdown files in VS Code, wired back to Claude Code over MCP.
 
 Claude writes the document. You comment on specific words, sentences and paragraphs.
@@ -32,6 +34,10 @@ npm run build
 npm run package          # -> markdown-claude-review.vsix
 code --install-extension markdown-claude-review.vsix
 ```
+
+Or grab a prebuilt `.vsix` from the artifacts of any green
+[CI run](https://github.com/MagicMicky/markdown-claude-review/actions/workflows/ci.yml)
+on `main`, and skip the toolchain.
 
 Then, in the workspace where you write documents:
 
@@ -200,8 +206,9 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 
 ```sh
 npm run watch      # rebuild on change
-npm test           # anchoring + store + digest tests
+npm test           # anchoring, context, store and guidance tests
 npm run typecheck
 ```
 
 Press `F5` in VS Code to launch an Extension Development Host.
+See [CLAUDE.md](CLAUDE.md) for the invariants worth not breaking.

@@ -1,10 +1,21 @@
-.vscode/**
+# Sources and build tooling — dist/ is what ships.
 src/**
 dist-test/**
 node_modules/**
 esbuild.mjs
 tsconfig*.json
 **/*.map
+
+# Repo and editor plumbing
+.vscode/**
+.github/**
 .gitignore
 .vscodeignore
-LICENSE
+CLAUDE.md
+
+# Local state. vsce does not read .gitignore, so these must be listed
+# again here or a packaged extension ships someone's review threads and
+# a machine-specific MCP config.
+.review/**
+.mcp.json
+.claude/**
