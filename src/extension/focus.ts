@@ -18,7 +18,7 @@ const SELECTION_DEBOUNCE_MS = 60;
  *
  * Clicking a card moves the editor selection, which fires
  * `onDidChangeTextEditorSelection`, which would recompute and re-emit — and the
- * sidebar would scroll itself under the click. `TextEditorSelectionChangeKind`
+ * preview would scroll itself under the click. `TextEditorSelectionChangeKind`
  * is not a reliable discriminator for programmatic assignment, so this is a
  * time window instead.
  */
@@ -27,7 +27,7 @@ const ECHO_SUPPRESS_MS = 250;
 /**
  * Which comment thread the cursor is inside.
  *
- * Shared by the decorations and the sidebar so the two highlights always agree.
+ * Shared by the decorations and the preview so the two highlights always agree.
  * That coordinated pair — a highlighted passage and an expanded card — is what
  * stands in for the pixel alignment VS Code cannot give us.
  */
@@ -54,7 +54,7 @@ export class FocusTracker implements vscode.Disposable {
     return this.current;
   }
 
-  /** Set from the sidebar or a command, suppressing the selection echo it causes. */
+  /** Set from the preview or a command, suppressing the selection echo it causes. */
   setActive(threadId: string | null, origin: 'webview' | 'command'): void {
     this.suppressUntil = Date.now() + ECHO_SUPPRESS_MS;
     const docRelPath = threadId

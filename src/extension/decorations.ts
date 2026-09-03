@@ -45,7 +45,7 @@ export class Decorations implements vscode.Disposable {
     // Only used in 'off' mode. A collapsed native thread already draws VS Code's
     // own comment glyph in the gutter; painting ours on top gives two icons in
     // one lane. The SVG cannot use theme variables, hence one neutral accent —
-    // status colour is carried by the underline and the sidebar card.
+    // status colour is carried by the underline and the preview bubble.
     this.gutter = vscode.window.createTextEditorDecorationType({
       gutterIconPath: vscode.Uri.joinPath(extensionUri, 'media', 'gutter-comment.svg'),
       gutterIconSize: 'contain',

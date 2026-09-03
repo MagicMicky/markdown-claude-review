@@ -21,7 +21,7 @@ interface PendingDraft {
 /**
  * Every mutation to a review, in one place.
  *
- * Commands, the inline threads and the sidebar all call these, so no surface
+ * Commands, the inline threads and the preview all call these, so no surface
  * depends on another. Previously this logic lived inside `CommentUI`, which
  * meant turning the inline layer off would have taken Delete Thread with it.
  */
