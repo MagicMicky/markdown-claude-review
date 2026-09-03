@@ -1,5 +1,7 @@
 import MarkdownIt from 'markdown-it';
-import type Token from 'markdown-it/lib/token';
+// markdown-it 15 ships its own types and blocks deep imports, so Token and the
+// engine type are named exports rather than 'markdown-it/lib/token'.
+import type { MarkdownIt as MarkdownItEngine, Token } from 'markdown-it';
 // The common bundle (~35 languages) rather than all ~190: the full package
 // adds well over a megabyte to the extension for languages a policy document
 // will never contain. Unknown languages fall back to plain text, exactly as
@@ -28,9 +30,19 @@ export interface PreviewSettings {
  * Markdown rendering for the comment preview.
  *
  * Deliberately mirrors VS Code's built-in preview so the two look and behave
- * the same: markdown-it 12 (the version the built-in bundles — 14 renamed inline
- * rules and would drift), the same options, the same highlight.js alias map, and
- * the same `data-line` / `code-line` source-map convention.
+ * the same: the same options, the same highlight.js alias map, and the same
+ * `data-line` / `code-line` source-map convention.
+ *
+ * The built-in still bundles markdown-it 12 while this uses 15, which sounds
+ * like drift and is not: 12 and 15 were compared on this repo's own documents
+ * and on the edge cases the offset mapping cares about — entities, escapes,
+ * `snake_case`, emphasis boundaries, autolinks, raw HTML, tables, nested
+ * lists, CJK and ZWJ emoji — across every combination of the breaks, linkify
+ * and typographer settings, and produced byte-identical HTML and an identical
+ * token stream. What matters for matching the built-in is the option set and
+ * the CommonMark behaviour, not the version number. If they do diverge one
+ * day it will show up as a failing test in markdown.test.ts, which pins the
+ * mapping to concrete expected offsets.
  *
  * Two deliberate differences from the built-in, both so that rendered text can
  * be mapped back to source characters:
@@ -175,7 +187,7 @@ export interface RenderOptions {
   resolveImage?: (src: string) => string;
 }
 
-export function createEngine(settings: PreviewSettings): MarkdownIt {
+export function createEngine(settings: PreviewSettings): MarkdownItEngine {
   const md = new MarkdownIt({
     html: true,
     breaks: settings.breaks,
@@ -264,8 +276,10 @@ export function render(source: string, opts: RenderOptions): Rendered {
     const defaultImage = md.renderer.rules.image;
     md.renderer.rules.image = (tokens, idx, options, env, self) => {
       const token = tokens[idx];
+      // attrGet is typed string | number in markdown-it 15; an src attribute
+      // parsed out of markdown is always a string.
       const src = token.attrGet('src');
-      if (src) {
+      if (typeof src === 'string' && src) {
         token.attrSet('data-src', src);
         token.attrSet('src', opts.resolveImage!(src));
       }

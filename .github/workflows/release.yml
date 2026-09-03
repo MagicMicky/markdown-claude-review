@@ -1,0 +1,79 @@
+# Cut a release from a version tag.
+#
+#   npm version patch   # or minor / major — writes package.json + a v* tag
+#   git push --follow-tags
+#
+# That produces a permanent GitHub Release with the .vsix attached, which is
+# how the extension gets onto another machine:
+#
+#   gh release download -R MagicMicky/markdown-claude-review -p '*.vsix'
+#   code --install-extension markdown-claude-review.vsix
+#
+# CI's build artifacts expire after 90 days; release assets do not, which is
+# the whole reason this exists separately from ci.yml.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json produces a release whose asset
+      # reports a different version than the release itself, and VS Code
+      # believes the manifest. Fail loudly instead.
+      - name: Check tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+            exit 1
+          fi
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package
+
+      - name: Publish release
+        run: |
+          gh release create "$GITHUB_REF_NAME" markdown-claude-review.vsix \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Marketplace publishing, dormant until the secrets exist. Adding either
+      # one turns the matching step on with no edit here. Both also require
+      # dropping "private": true from package.json — vsce refuses to publish a
+      # package marked private.
+      #
+      # Note that these are the only maintenance cost in this repo that comes
+      # with a deadline: Azure DevOps PATs expire after a year at most, and an
+      # expired one turns every release red until you rotate it.
+      - name: Publish to the VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx vsce publish --packagePath markdown-claude-review.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish markdown-claude-review.vsix -p "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}

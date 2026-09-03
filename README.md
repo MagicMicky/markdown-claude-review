@@ -26,19 +26,27 @@ shortcut, not a requirement.
 ## Install
 
 Nothing here is OS-specific: macOS, Linux and Windows all work. You need VS Code 1.90+,
-Node 18+, Claude Code, and the `code` CLI on your `PATH` (on macOS, run
-**Shell Command: Install 'code' command in PATH** from the command palette first).
+Claude Code, and the `code` CLI on your `PATH` (on macOS, run **Shell Command: Install
+'code' command in PATH** from the command palette first).
+
+From the latest [release](https://github.com/MagicMicky/markdown-claude-review/releases),
+no toolchain needed:
 
 ```sh
-npm install
-npm run build
-npm run package          # -> markdown-claude-review.vsix
+gh release download -R MagicMicky/markdown-claude-review -p '*.vsix'
 code --install-extension markdown-claude-review.vsix
 ```
 
-Or grab a prebuilt `.vsix` from the artifacts of any green
-[CI run](https://github.com/MagicMicky/markdown-claude-review/actions/workflows/ci.yml)
-on `main`, and skip the toolchain.
+Re-run those two lines to upgrade. There is no auto-update: the extension is not on the
+Marketplace, so VS Code has nowhere to check.
+
+From source instead, with Node 18+:
+
+```sh
+npm install
+npm run package          # -> markdown-claude-review.vsix
+code --install-extension markdown-claude-review.vsix
+```
 
 Then, in the workspace where you write documents:
 
@@ -155,9 +163,10 @@ comment work on a table cell, inside a fenced code block, on a `snake_case` iden
 across an HTML entity, or spanning several paragraphs — all cases where guessing what
 the page would say produced no highlight at all.
 
-Rendering pins `markdown-it@12`, the version VS Code's built-in preview bundles, with
-its options and its highlight.js alias map, so output matches rather than merely
-resembles it.
+Rendering uses `markdown-it` with the built-in preview's own options and highlight.js
+alias map, so output matches rather than merely resembles it. It is not pinned to the
+version VS Code bundles: 12 and 15 render this repo's documents, and every edge case the
+offset mapping depends on, to byte-identical HTML.
 
 ## Storage
 

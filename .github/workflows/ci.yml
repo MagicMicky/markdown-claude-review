@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # A repo nobody commits to still rots: a runner image change, a transitive
+  # dependency yanked from the registry, an action reaching end of life. The
+  # monthly run is how that surfaces as a red build instead of as a surprise
+  # the next time you actually need to ship. GitHub disables scheduled runs
+  # after 60 days with no repository activity, and emails first; Dependabot's
+  # weekly PRs count as activity.
+  schedule:
+    - cron: '0 6 1 * *'
 
 permissions:
   contents: read
