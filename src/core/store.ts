@@ -41,18 +41,52 @@ export type ReviewLoad =
   | { kind: 'missing'; file: ReviewFile }
   | { kind: 'corrupt'; reason: string };
 
+const STATUSES: readonly string[] = ['open', 'answered', 'resolved', 'stale'];
+const AUTHORS: readonly string[] = ['user', 'claude'];
+
+function isMessage(m: unknown): m is Message {
+  if (typeof m !== 'object' || m === null) return false;
+  const x = m as Record<string, unknown>;
+  return (
+    typeof x.id === 'string' &&
+    AUTHORS.includes(x.author as string) &&
+    typeof x.authorName === 'string' &&
+    typeof x.body === 'string' &&
+    typeof x.ts === 'string'
+  );
+}
+
+function isAnchor(a: unknown): a is Anchor {
+  if (typeof a !== 'object' || a === null) return false;
+  const x = a as Record<string, unknown>;
+  return (
+    typeof x.quote === 'string' &&
+    typeof x.prefix === 'string' &&
+    typeof x.suffix === 'string' &&
+    Array.isArray(x.headingPath) &&
+    x.headingPath.every((h) => typeof h === 'string')
+  );
+}
+
+/**
+ * Every field the rest of the code dereferences without checking.
+ *
+ * A partial check is not much better than none: an unrecognised status reaches
+ * a lookup table and yields undefined, and a missing timestamp reaches
+ * `createdAt.localeCompare` in the merge and throws. Validate here, once, where
+ * the file enters the program.
+ */
 function isThread(t: unknown): t is Thread {
   if (typeof t !== 'object' || t === null) return false;
   const x = t as Record<string, unknown>;
-  const anchor = x.anchor as Record<string, unknown> | undefined;
   return (
     typeof x.id === 'string' &&
-    typeof x.status === 'string' &&
+    STATUSES.includes(x.status as string) &&
+    typeof x.createdAt === 'string' &&
+    typeof x.updatedAt === 'string' &&
+    isAnchor(x.anchor) &&
     Array.isArray(x.messages) &&
-    typeof anchor === 'object' &&
-    anchor !== null &&
-    typeof anchor.quote === 'string' &&
-    Array.isArray(anchor.headingPath)
+    x.messages.every(isMessage)
   );
 }
 

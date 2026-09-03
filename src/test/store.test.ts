@@ -77,6 +77,32 @@ test('a structurally broken thread makes the file corrupt, not a crash later', a
   await fsp.rm(root, { recursive: true, force: true });
 });
 
+test('every field the rest of the code dereferences is validated', async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdreview-'));
+  const file = reviewPathFor(root, '.review', 'x.md');
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+
+  const good = sampleThread();
+  const broken: Array<[string, unknown]> = [
+    ['unknown status', { ...good, status: 'wontfix' }],
+    ['missing createdAt', { ...good, createdAt: undefined }],
+    ['missing updatedAt', { ...good, updatedAt: undefined }],
+    ['anchor without context', { ...good, anchor: { quote: 'x', headingPath: [] } }],
+    ['headingPath of non-strings', { ...good, anchor: { ...good.anchor, headingPath: [1] } }],
+    ['message without an author', { ...good, messages: [{ id: 'm', body: 'x', ts: 'now' }] }],
+    ['message with an unknown author', { ...good, messages: [{ ...good.messages[0], author: 'bot' }] }],
+  ];
+
+  for (const [why, thread] of broken) {
+    await fsp.writeFile(file, JSON.stringify({ version: 1, document: 'x.md', threads: [thread] }));
+    assert.equal((await loadReview(file, 'x.md')).kind, 'corrupt', why);
+  }
+
+  await fsp.writeFile(file, JSON.stringify({ version: 1, document: 'x.md', threads: [good] }));
+  assert.equal((await loadReview(file, 'x.md')).kind, 'ok', 'a well-formed file still loads');
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
 test('merging keeps both sides: their reply and our resolve both survive', () => {
   const base = sampleThread();
   const ours = structuredClone(base);
