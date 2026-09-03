@@ -329,9 +329,11 @@ for the first release.
 Publishing needs two repository secrets, `VSCE_PAT` and `OVSX_PAT`. Either one being
 absent skips its registry and leaves the rest of the release intact.
 
-`VSCE_PAT` is an Azure DevOps personal access token, scoped to **all accessible
-organizations** with the **Marketplace → Manage** permission, and it expires after a
-year at most. When it lapses, the release workflow fails with the rotation steps printed
+`VSCE_PAT` is an Azure DevOps personal access token with the **Marketplace → Manage**
+permission, scoped to your own organization — Azure DevOps is retiring globally scoped
+tokens from 1 December 2026. It expires after a year at most. `npx vsce verify-pat
+magicmicky` checks one in seconds, which is worth doing before trusting it to a
+release. When it lapses, the release workflow fails with the rotation steps printed
 in the run summary — the GitHub Release and its `.vsix` are created first, so an expired
 token delays the registry update without blocking the release itself. Rotate the secret
 and use **Re-run failed jobs**; the release step is idempotent and no version bump is

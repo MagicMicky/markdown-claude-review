@@ -152,19 +152,38 @@ jobs:
       # Both continue-on-error so that one dead credential cannot stop the
       # other registry from getting the release; the report step below turns
       # either failure back into a red build, with instructions.
+      # --skip-duplicate so that re-running a release whose version already
+      # reached the registry is a no-op rather than an error. The recovery path
+      # for a failed publish is to re-run, and the version does not change on a
+      # re-run, so this is what stops the second registry's retry from being
+      # blocked by the first registry's success.
       - name: Publish to the VS Code Marketplace
         id: marketplace
         if: env.VSCE_PAT != ''
         continue-on-error: true
-        run: npx vsce publish --packagePath markdown-claude-review.vsix
+        timeout-minutes: 10
+        run: npx vsce publish --packagePath markdown-claude-review.vsix --skip-duplicate
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      # Open VSX refuses to publish into a namespace that does not exist yet,
+      # and creating one is a one-off that would otherwise be an undocumented
+      # manual prerequisite. It errors when the namespace is already there,
+      # which on every release after the first is the expected case.
+      - name: Ensure the Open VSX namespace exists
+        if: env.OVSX_PAT != ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npx ovsx create-namespace magicmicky -p "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
       - name: Publish to Open VSX
         id: openvsx
         if: env.OVSX_PAT != ''
         continue-on-error: true
-        run: npx --yes ovsx publish markdown-claude-review.vsix -p "$OVSX_PAT"
+        timeout-minutes: 10
+        run: npx ovsx publish markdown-claude-review.vsix -p "$OVSX_PAT" --skip-duplicate
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
@@ -199,13 +218,24 @@ jobs:
               echo "1. Sign in to <https://dev.azure.com> with the Microsoft account that owns"
               echo "   the \`magicmicky\` publisher, and open **User settings → Personal Access"
               echo "   Tokens → New Token**."
-              echo "2. Set **Organization** to \`All accessible organizations\`. A token scoped to"
-              echo "   a single organization fails authentication with an unhelpful 401 — this"
-              echo "   is the most common mistake."
+              echo "2. Leave **Organization** set to your own organization. Older guidance said"
+              echo "   to use \`All accessible organizations\`; those global tokens are being"
+              echo "   retired by Azure DevOps from 1 December 2026, and an organization-scoped"
+              echo "   token publishes to the Marketplace correctly."
               echo "3. Set **Scopes** to \`Custom defined\`, then check **Marketplace → Manage**."
               echo "4. Set the expiration (one year is the maximum) and copy the token; it is"
               echo "   shown only once."
-              echo "5. Store it:"
+              echo "5. Check it before relying on it — this takes seconds and beats"
+              echo "   discovering the problem during the next release:"
+              echo
+              echo '   ```sh'
+              echo "   npx vsce verify-pat magicmicky"
+              echo '   ```'
+              echo
+              echo "   A \`TF400813\` naming the all-zeros user id means the token cannot resolve"
+              echo "   your identity against the Marketplace — usually the wrong account rather"
+              echo "   than the wrong scope."
+              echo "6. Store it:"
               echo
               echo '   ```sh'
               echo "   gh secret set VSCE_PAT --repo $REPO"
