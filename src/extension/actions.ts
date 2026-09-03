@@ -126,6 +126,9 @@ export class ReviewActions {
     if (choice !== 'Delete') return false;
     await this.session.update(found.state.docRelPath, (state) => {
       state.file.threads = state.file.threads.filter((t) => t.id !== threadId);
+      // Without the tombstone the save-time merge finds the thread still on
+      // disk and adds it straight back, so Delete does nothing at all.
+      state.deleted.add(threadId);
     });
     return true;
   }

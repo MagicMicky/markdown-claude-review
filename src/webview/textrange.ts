@@ -14,6 +14,12 @@ interface Run {
   el: Element;
   start: number;
   end: number;
+  /**
+   * The source spelling is a different length from the rendered text — an
+   * entity, an escape. Offsets inside cannot be interpolated, so the run is
+   * treated as one unit rather than landing on the wrong characters.
+   */
+  approx: boolean;
 }
 
 function runsIn(root: ParentNode): Run[] {
@@ -21,7 +27,9 @@ function runsIn(root: ParentNode): Run[] {
   for (const el of Array.from(root.querySelectorAll('[data-o]'))) {
     const start = Number(el.getAttribute('data-o'));
     const end = Number(el.getAttribute('data-e'));
-    if (Number.isFinite(start) && Number.isFinite(end)) out.push({ el, start, end });
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      out.push({ el, start, end, approx: el.hasAttribute('data-approx') });
+    }
   }
   return out;
 }
@@ -48,7 +56,10 @@ function textNodes(el: Element): Text[] {
 function pointInRun(run: Run, chars: number): { node: Node; offset: number } {
   const nodes = textNodes(run.el);
   if (nodes.length === 0) return { node: run.el, offset: 0 };
-  let remaining = Math.max(0, chars);
+  const total = nodes.reduce((n, t) => n + t.data.length, 0);
+  // An approximate run snaps to whichever edge is nearer: better to cover a
+  // little more than to be silently off by the width of an entity.
+  let remaining = run.approx ? (chars <= 0 ? 0 : total) : Math.max(0, chars);
   for (const node of nodes) {
     if (remaining <= node.data.length) return { node, offset: remaining };
     remaining -= node.data.length;
@@ -93,6 +104,21 @@ export function sourceOffsetAt(node: Node, offset: number): number | null {
   const start = Number(run.getAttribute('data-o'));
   const end = Number(run.getAttribute('data-e'));
   if (!Number.isFinite(start)) return null;
+
+  if (run.hasAttribute('data-approx')) {
+    // Same reasoning as pointInRun: report an edge, never a position inside.
+    const nodes = textNodes(run);
+    const total = nodes.reduce((n, t) => n + t.data.length, 0);
+    let seen = 0;
+    for (const text of nodes) {
+      if (text === node) {
+        seen += offset;
+        break;
+      }
+      seen += text.data.length;
+    }
+    return seen * 2 >= total ? end : start;
+  }
 
   let before = 0;
   for (const text of textNodes(run)) {

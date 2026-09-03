@@ -2,9 +2,9 @@
  * The commenting preview's client.
  *
  * Bundled with `platform: 'browser'`. It owns the DOM and nothing else: it never
- * sees a source offset and never parses markdown. A selection leaves as plain
- * text plus a block index; a highlight arrives the same way. The host does the
- * mapping, because the host is what holds the source.
+ * parses markdown and never reads the file. Selections and highlights cross as
+ * source character offsets, which the rendered HTML carries on every run of
+ * text, so translating between the two is arithmetic rather than a search.
  *
  * On `innerHTML`: the rendered document is injected as HTML, because that is
  * what a preview is — the same trust model as VS Code's own, with a CSP whose
@@ -46,7 +46,7 @@ const USER_SCROLL_QUIET_MS = 400;
 type Pending =
   | { kind: 'reply'; threadId: string; body: string }
   | { kind: 'status'; threadId: string }
-  | { kind: 'create'; draftId: string };
+  | { kind: 'create'; draftId: string; draft: Draft; body: string };
 
 interface Draft {
   draftId: string;
@@ -310,6 +310,10 @@ function signature(card: CardVM): string {
     state.drafts[card.id] ?? '',
     state.errors[card.id] ?? '',
     pending.map((p) => p.kind),
+    // Re-attach is only offered while something is selected. Leave this out and
+    // a lost thread's button stays disabled forever, because selecting a new
+    // passage would not change anything the card is rebuilt from.
+    card.canReattach && Boolean(pendingSelection),
   ]);
 }
 
@@ -532,7 +536,9 @@ function submitDraft(body: string): void {
   const draft = state.draft;
   if (!draft || !body.trim()) return;
   const opId = nextOp();
-  state.pending[opId] = { kind: 'create', draftId: draft.draftId };
+  // Hold on to the draft and its text until the host confirms the write, or a
+  // failure has nothing to put back and the comment is simply lost.
+  state.pending[opId] = { kind: 'create', draftId: draft.draftId, draft, body: body.trim() };
   delete state.drafts[draft.draftId];
   post({ type: 'createThread', opId, draftId: draft.draftId, body: body.trim() });
   state.draft = null;
@@ -563,7 +569,10 @@ document.addEventListener('selectionchange', () => {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed) {
     addButton.hidden = true;
-    pendingSelection = null;
+    if (pendingSelection) {
+      pendingSelection = null;
+      renderMargin();
+    }
   }
 });
 
@@ -606,7 +615,10 @@ function evaluateSelection(): void {
     return;
   }
 
+  const had = Boolean(pendingSelection);
   pendingSelection = range;
+  // Lost threads offer Re-attach only while a passage is selected.
+  if (!had) renderMargin();
   const rect = sel.getRangeAt(0).getBoundingClientRect();
   addButton.hidden = false;
   addButton.style.top = `${rect.bottom + window.scrollY + 6}px`;
@@ -800,10 +812,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
       delete state.pending[m.opId];
       if (!m.ok && op && m.message && m.message !== 'cancelled') {
         if (op.kind === 'create') {
-          // Give the draft back rather than losing what was typed.
-          state.drafts[op.draftId] = state.drafts[op.draftId] ?? '';
-          if (state.draft?.draftId === op.draftId) state.draft.lost = m.message;
-          else window.alert(m.message);
+          // Put the composer back with what was typed still in it.
+          state.drafts[op.draftId] = op.body;
+          state.draft = { ...op.draft, lost: m.message };
         } else {
           state.errors[op.threadId] = m.message;
           if (op.kind === 'reply') state.drafts[op.threadId] = op.body;

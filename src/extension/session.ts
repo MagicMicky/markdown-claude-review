@@ -326,9 +326,11 @@ export class Session implements vscode.Disposable {
       return;
     }
     state.file = mergeReviewFiles(state.file, current.file, state.deleted);
-    state.deleted.clear();
 
     const mtime = await writeReview(file, state.file);
+    // Only now: a failed write must leave the tombstones intact, or a retry
+    // would merge the deleted threads back in.
+    state.deleted.clear();
     this.selfWrites.set(file, mtime);
     this.emitter.fire(docRelPath);
   }

@@ -102,6 +102,20 @@ export async function loadReview(file: string, docRelPath: string): Promise<Revi
  * `deleted` carries ids this side removed on purpose, so a thread the other
  * side still has does not come back from the dead.
  */
+/**
+ * Status is not last-writer-wins.
+ *
+ * Resolving is an explicit, terminal act; a reply that happens to carry a later
+ * timestamp must not reopen a thread someone closed. Everything below that
+ * follows from who spoke last, which is what `appendMessage` guarantees — so
+ * the outcome does not depend on two clocks agreeing to the millisecond.
+ */
+function mergeStatus(a: Thread, b: Thread, newer: Thread, messages: Message[]): ThreadStatus {
+  if (a.status === 'resolved' || b.status === 'resolved') return 'resolved';
+  if (newer.status === 'stale') return 'stale';
+  return messages[messages.length - 1]?.author === 'claude' ? 'answered' : 'open';
+}
+
 export function mergeReviewFiles(
   mine: ReviewFile,
   onDisk: ReviewFile,
@@ -121,11 +135,12 @@ export function mergeReviewFiles(
     for (const m of theirs.messages) messages.set(m.id, m);
     for (const m of ours.messages) messages.set(m.id, m);
 
-    // Everything else is last-writer-wins on the thread's own timestamp.
+    const merged = [...messages.values()].sort((a, b) => a.ts.localeCompare(b.ts));
     const newer = ours.updatedAt >= theirs.updatedAt ? ours : theirs;
     byId.set(ours.id, {
       ...newer,
-      messages: [...messages.values()].sort((a, b) => a.ts.localeCompare(b.ts)),
+      status: mergeStatus(ours, theirs, newer, merged),
+      messages: merged,
     });
   }
 

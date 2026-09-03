@@ -94,6 +94,43 @@ test('merging keeps both sides: their reply and our resolve both survive', () =>
   assert.equal(merged.threads[0].status, 'resolved', 'and neither must our resolve');
 });
 
+test('a resolve survives a reply that carries a later timestamp', () => {
+  // Two clocks in two processes. The outcome must not depend on which one ran
+  // last, or a reply silently reopens a thread someone deliberately closed.
+  const base = sampleThread();
+  const ours = structuredClone(base);
+  setStatus(ours, 'resolved');
+  ours.updatedAt = '2026-09-01T10:00:00.000Z';
+
+  const theirs = structuredClone(base);
+  appendMessage(theirs, makeMessage('claude', 'Claude', 'Done.'));
+  theirs.updatedAt = '2026-09-01T23:59:59.000Z';
+
+  for (const [a, b] of [
+    [ours, theirs],
+    [theirs, ours],
+  ]) {
+    const merged = mergeReviewFiles(
+      { version: 1, document: 'a.md', threads: [structuredClone(a)] },
+      { version: 1, document: 'a.md', threads: [structuredClone(b)] },
+    );
+    assert.equal(merged.threads[0].status, 'resolved', 'whichever side is merged first');
+    assert.equal(merged.threads[0].messages.length, 2);
+  }
+});
+
+test('an unresolved thread takes whose-turn-it-is from the last message', () => {
+  const ours = sampleThread();
+  const theirs = structuredClone(ours);
+  appendMessage(theirs, makeMessage('claude', 'Claude', 'Which module?'));
+
+  const merged = mergeReviewFiles(
+    { version: 1, document: 'a.md', threads: [ours] },
+    { version: 1, document: 'a.md', threads: [theirs] },
+  );
+  assert.equal(merged.threads[0].status, 'answered', 'Claude spoke last');
+});
+
 test('merging adopts threads created by the other process', () => {
   const mine = sampleThread();
   const theirs = { ...sampleThread(), id: 'mr_theirs' };

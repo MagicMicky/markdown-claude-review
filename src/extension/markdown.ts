@@ -229,18 +229,24 @@ export function render(source: string, opts: RenderOptions): Rendered {
   });
 
   // Emit the offsets that annotateInline worked out.
-  const run = (content: string, meta: { srcStart?: number; srcEnd?: number } | null): string => {
+  const run = (content: string, token: Token): string => {
+    const meta = token.meta as { srcStart?: number; srcEnd?: number } | null;
     if (meta?.srcStart === undefined) return content;
-    return `<span class="${TEXT_RUN_CLASS}" data-o="${meta.srcStart}" data-e="${meta.srcEnd}">${content}</span>`;
+    // When the source spelling is longer than what it renders — `&amp;` for
+    // `&`, `\\*` for `*` — offsets inside the run do not line up
+    // character-for-character. Mark it so consumers treat it as one unit
+    // instead of interpolating and landing on the wrong characters.
+    const exact = meta.srcEnd! - meta.srcStart === token.content.length ? '' : ' data-approx="1"';
+    return `<span class="${TEXT_RUN_CLASS}" data-o="${meta.srcStart}" data-e="${meta.srcEnd}"${exact}>${content}</span>`;
   };
   md.renderer.rules.text = (tokens, idx) =>
-    run(md.utils.escapeHtml(tokens[idx].content), tokens[idx].meta);
+    run(md.utils.escapeHtml(tokens[idx].content), tokens[idx]);
   const defaultCode = md.renderer.rules.code_inline;
   md.renderer.rules.code_inline = (tokens, idx, options, env, self) => {
     const html = defaultCode
       ? defaultCode(tokens, idx, options, env, self)
       : `<code>${md.utils.escapeHtml(tokens[idx].content)}</code>`;
-    return run(html, tokens[idx].meta);
+    return run(html, tokens[idx]);
   };
 
   // Heading anchors, as the built-in does.

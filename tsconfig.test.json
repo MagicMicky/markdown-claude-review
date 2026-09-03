@@ -8,7 +8,7 @@
   },
   "include": [
     "src/core/**/*.ts",
-    "src/test/**/*.ts",
+    "src/test/*.ts",
     "src/extension/markdown.ts"
   ]
 }

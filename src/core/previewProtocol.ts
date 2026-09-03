@@ -4,10 +4,11 @@
  * Types only, zero runtime, imported by both sides so the two cannot drift.
  *
  * The division of labour it encodes: **the host owns the source, the webview
- * owns the DOM.** The webview never sees a source offset and never parses
- * markdown; the host never touches the DOM. A selection crosses as plain text
- * plus a block index, and a highlight crosses back as plain text plus a block
- * index. Neither side needs the other's model.
+ * owns the DOM.** The webview never parses markdown and the host never touches
+ * the DOM; both sides speak in source character offsets, which the rendered
+ * HTML carries on every run of text (`data-o` / `data-e`). That is why a
+ * highlight can span paragraphs and a selection can start inside a table cell —
+ * neither side has to reconstruct which characters were markup.
  */
 
 import type { CardVM } from './cards.js';

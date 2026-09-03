@@ -277,7 +277,7 @@ configured.
 
 ```sh
 npm run typecheck  # root project and the webview project
-npm test           # 89 tests
+npm test           # core suite plus the webview's DOM tests
 npm run watch      # rebuild on change
 npm run build      # three bundles: extension, MCP server, preview webview
 ```
