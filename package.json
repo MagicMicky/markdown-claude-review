@@ -1,0 +1,261 @@
+{
+  "name": "markdown-claude-review",
+  "displayName": "Markdown Claude Review",
+  "description": "Google-Docs-style comment threads on markdown, wired back to Claude Code over MCP.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MagicMicky/markdown-claude-review.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MagicMicky/markdown-claude-review/issues"
+  },
+  "homepage": "https://github.com/MagicMicky/markdown-claude-review#readme",
+  "keywords": [
+    "markdown",
+    "review",
+    "comments",
+    "annotations",
+    "claude",
+    "claude-code",
+    "mcp",
+    "documentation"
+  ],
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "bin": {
+    "markdown-review-mcp": "./dist/mcp.js"
+  },
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "mdreview.createThread",
+        "title": "Add Comment",
+        "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.replyThread",
+        "title": "Reply",
+        "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.resolveThread",
+        "title": "Resolve Thread",
+        "category": "Markdown Review",
+        "icon": "$(check)"
+      },
+      {
+        "command": "mdreview.unresolveThread",
+        "title": "Reopen Thread",
+        "category": "Markdown Review",
+        "icon": "$(history)"
+      },
+      {
+        "command": "mdreview.deleteThread",
+        "title": "Delete Thread",
+        "category": "Markdown Review",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "mdreview.sendToClaude",
+        "title": "Send Review to Claude Code",
+        "category": "Markdown Review",
+        "icon": "$(send)"
+      },
+      {
+        "command": "mdreview.reattachThread",
+        "title": "Re-attach Stale Thread to Selection",
+        "category": "Markdown Review",
+        "icon": "$(link)"
+      },
+      {
+        "command": "mdreview.revealThread",
+        "title": "Go to Thread",
+        "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.setupClaude",
+        "title": "Set Up Claude Code Integration (.mcp.json)",
+        "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.refresh",
+        "title": "Refresh Threads",
+        "category": "Markdown Review",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mdreview",
+          "title": "Markdown Review",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "mdreview": [
+        {
+          "id": "mdreview.threads",
+          "name": "Comment Threads"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "mdreview.replyThread",
+          "when": "false"
+        },
+        {
+          "command": "mdreview.resolveThread",
+          "when": "false"
+        },
+        {
+          "command": "mdreview.unresolveThread",
+          "when": "false"
+        },
+        {
+          "command": "mdreview.deleteThread",
+          "when": "false"
+        },
+        {
+          "command": "mdreview.revealThread",
+          "when": "false"
+        },
+        {
+          "command": "mdreview.createThread",
+          "when": "false"
+        },
+        {
+          "command": "mdreview.reattachThread",
+          "when": "false"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "mdreview.createThread",
+          "group": "inline@1",
+          "when": "commentController == mdreview && commentThreadIsEmpty"
+        },
+        {
+          "command": "mdreview.replyThread",
+          "group": "inline@1",
+          "when": "commentController == mdreview && !commentThreadIsEmpty"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "mdreview.resolveThread",
+          "group": "navigation@1",
+          "when": "commentController == mdreview && commentThread =~ /open|answered|stale/"
+        },
+        {
+          "command": "mdreview.unresolveThread",
+          "group": "navigation@2",
+          "when": "commentController == mdreview && commentThread =~ /resolved/"
+        },
+        {
+          "command": "mdreview.deleteThread",
+          "group": "navigation@3",
+          "when": "commentController == mdreview"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "mdreview.sendToClaude",
+          "group": "navigation@1",
+          "when": "view == mdreview.threads"
+        },
+        {
+          "command": "mdreview.refresh",
+          "group": "navigation@2",
+          "when": "view == mdreview.threads"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "mdreview.reattachThread",
+          "group": "inline@1",
+          "when": "view == mdreview.threads && viewItem == thread.stale"
+        },
+        {
+          "command": "mdreview.resolveThread",
+          "group": "inline@2",
+          "when": "view == mdreview.threads && viewItem =~ /^thread\\.(open|answered|stale)$/"
+        },
+        {
+          "command": "mdreview.unresolveThread",
+          "group": "inline@2",
+          "when": "view == mdreview.threads && viewItem == thread.resolved"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Markdown Claude Review",
+      "properties": {
+        "mdreview.reviewDir": {
+          "type": "string",
+          "default": ".review",
+          "description": "Directory (relative to the workspace root) where comment threads and review requests are stored."
+        },
+        "mdreview.author": {
+          "type": "string",
+          "default": "",
+          "description": "Name recorded as the author of your comments. Defaults to your git user.name, else 'You'."
+        },
+        "mdreview.terminalName": {
+          "type": "string",
+          "default": "claude",
+          "description": "Substring used to find the Claude Code terminal when sending a review."
+        },
+        "mdreview.highlightCommentedRanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a subtle highlight behind text that has comment threads attached."
+        },
+        "mdreview.fuzzyThreshold": {
+          "type": "number",
+          "default": 0.62,
+          "description": "Similarity (0-1) required to re-attach a comment to a rewritten paragraph. Below this the thread is marked stale instead."
+        },
+        "mdreview.sendPrompt": {
+          "type": "string",
+          "default": "/review",
+          "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test dist-test/test/*.test.js",
+    "pretest": "tsc -p tsconfig.test.json",
+    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies -o markdown-claude-review.vsix"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}
