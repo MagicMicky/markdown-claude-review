@@ -218,13 +218,24 @@ jobs:
               echo "1. Sign in to <https://dev.azure.com> with the Microsoft account that owns"
               echo "   the \`magicmicky\` publisher, and open **User settings → Personal Access"
               echo "   Tokens → New Token**."
-              echo "2. Set **Organization** to \`All accessible organizations\`. A token scoped to"
-              echo "   a single organization fails authentication with an unhelpful 401 — this"
-              echo "   is the most common mistake."
+              echo "2. Leave **Organization** set to your own organization. Older guidance said"
+              echo "   to use \`All accessible organizations\`; those global tokens are being"
+              echo "   retired by Azure DevOps from 1 December 2026, and an organization-scoped"
+              echo "   token publishes to the Marketplace correctly."
               echo "3. Set **Scopes** to \`Custom defined\`, then check **Marketplace → Manage**."
               echo "4. Set the expiration (one year is the maximum) and copy the token; it is"
               echo "   shown only once."
-              echo "5. Store it:"
+              echo "5. Check it before relying on it — this takes seconds and beats"
+              echo "   discovering the problem during the next release:"
+              echo
+              echo '   ```sh'
+              echo "   npx vsce verify-pat magicmicky"
+              echo '   ```'
+              echo
+              echo "   A \`TF400813\` naming the all-zeros user id means the token cannot resolve"
+              echo "   your identity against the Marketplace — usually the wrong account rather"
+              echo "   than the wrong scope."
+              echo "6. Store it:"
               echo
               echo '   ```sh'
               echo "   gh secret set VSCE_PAT --repo $REPO"
