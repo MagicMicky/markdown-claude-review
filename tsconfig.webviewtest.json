@@ -1,0 +1,15 @@
+{
+  // Webview code needs the DOM lib, and the DOM lib must not leak into the root
+  // project or src/core could quietly start using `document`. So its tests
+  // compile as their own project, alongside the webview's own typecheck.
+  "extends": "./tsconfig.webview.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-test",
+    "rootDir": "src",
+    "noUnusedLocals": false,
+    "types": ["node", "jsdom"]
+  },
+  "include": ["src/webview/**/*.ts", "src/extension/markdown.ts", "src/test/webview/**/*.ts"],
+  "exclude": []
+}

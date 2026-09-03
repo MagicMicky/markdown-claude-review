@@ -2,9 +2,13 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { EDITING_CONTRACT } from '../core/guidance.js';
 import { COMMAND_MARKER, isOurCommand, mergeMcpConfig } from '../core/setup.js';
+import { ReviewActions } from './actions.js';
 import { CommentUI } from './comments.js';
+import { inlineMode } from './config.js';
+import { Decorations } from './decorations.js';
+import { FocusTracker } from './focus.js';
+import { PreviewManager } from './preview.js';
 import { Session } from './session.js';
-import { ThreadTree } from './tree.js';
 
 /** Pause between typing the prompt and pressing Enter, so the TUI settles the paste. */
 const SUBMIT_DELAY_MS = 80;
@@ -50,70 +54,161 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (!folder) return;
 
   const session = new Session(folder.uri.fsPath);
-  const ui = new CommentUI(session);
-  const tree = new ThreadTree(session);
-  context.subscriptions.push(session, ui);
+  const focus = new FocusTracker(session);
+
+  // The inline layer is optional, so nothing may depend on it existing.
+  // `actions` reaches it through a getter, and every command goes through
+  // `actions` rather than through the comment UI.
+  let ui: CommentUI | undefined;
+  const actions = new ReviewActions(session, () => ui);
+  const decorations = new Decorations(session, focus, context.extensionUri);
+  const previews = new PreviewManager(context.extensionUri, session, actions, focus);
+
+  const applyInlineMode = () => {
+    const wanted = inlineMode() !== 'off';
+    if (wanted && !ui) {
+      ui = new CommentUI(session, actions);
+      ui.sync();
+    } else if (!wanted && ui) {
+      ui.dispose();
+      ui = undefined;
+    }
+    decorations.paint();
+  };
+
   context.subscriptions.push(
-    vscode.window.createTreeView('mdreview.threads', {
-      treeDataProvider: tree,
-      showCollapseAll: true,
+    session,
+    focus,
+    decorations,
+    previews,
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('mdreview.inlineThreads')) applyInlineMode();
+      else if (e.affectsConfiguration('mdreview')) decorations.paint();
     }),
+    { dispose: () => ui?.dispose() },
+  );
+
+  /**
+   * VS Code's own preview buttons hide themselves when `hasCustomMarkdownPreview`
+   * is set — an escape hatch for extensions that provide their own preview.
+   * Without it ours sits beside theirs looking like a duplicate, and worse, the
+   * buttons and the keybindings would open different previews.
+   *
+   * `mdreview.replacesPreview` gates our own title-bar button and keybindings on
+   * the same setting, so turning it off genuinely hands the built-in preview back
+   * rather than leaving a half-replaced state.
+   */
+  const applyPreviewOwnership = () => {
+    const owns = vscode.workspace
+      .getConfiguration('mdreview')
+      .get('replaceBuiltInPreview', true);
+    void vscode.commands.executeCommand('setContext', 'hasCustomMarkdownPreview', owns);
+    void vscode.commands.executeCommand('setContext', 'mdreview.replacesPreview', owns);
+  };
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('mdreview.replaceBuiltInPreview')) applyPreviewOwnership();
+    }),
+    // Leave VS Code's preview alone once we are gone.
+    { dispose: () => void vscode.commands.executeCommand('setContext', 'hasCustomMarkdownPreview', false) },
   );
 
   await session.init();
-  ui.sync();
+  applyInlineMode();
+  applyPreviewOwnership();
 
+  /** Thread id from a webview/tree string, or from an inline thread's title bar. */
   const idFrom = (arg: unknown): string | undefined => {
     if (typeof arg === 'string') return arg;
     if (arg && typeof arg === 'object') {
-      if ('thread' in arg && (arg as { thread?: unknown }).thread) {
-        const t = (arg as { thread: { id?: string } }).thread;
-        if (typeof t.id === 'string') return t.id;
-      }
-      // A vscode.CommentThread passed from the thread title bar.
       const asThread = arg as vscode.CommentThread;
-      if (asThread.uri && asThread.range) return ui.threadIdOf(asThread);
+      if (asThread.uri && asThread.range) return ui?.threadIdOf(asThread);
     }
     return undefined;
+  };
+
+  const markdownEditor = (): vscode.TextEditor | undefined => {
+    const editor = vscode.window.activeTextEditor;
+    return editor?.document.languageId === 'markdown' ? editor : undefined;
   };
 
   const register = (id: string, fn: (...args: any[]) => unknown) =>
     context.subscriptions.push(vscode.commands.registerCommand(id, fn));
 
-  register('mdreview.createThread', (reply: vscode.CommentReply) => ui.create(reply));
-  register('mdreview.replyThread', (reply: vscode.CommentReply) => ui.reply(reply));
+  register('mdreview.createThread', (reply: vscode.CommentReply) => ui?.create(reply));
+  register('mdreview.replyThread', (reply: vscode.CommentReply) => ui?.reply(reply));
+
   register('mdreview.refresh', async () => {
+    // refreshAll fires the emitter per document, so every surface follows.
     await session.refreshAll();
-    ui.sync();
-    tree.refresh();
   });
-  register('mdreview.revealThread', (arg: unknown) => {
+
+  register('mdreview.openPreviewToSide', async () => {
+    const editor = markdownEditor();
+    if (!editor) {
+      vscode.window.showWarningMessage('Open a markdown file to preview it.');
+      return;
+    }
+    await previews.show(editor.document, vscode.ViewColumn.Beside);
+  });
+
+  register('mdreview.openPreview', async () => {
+    const editor = markdownEditor();
+    if (!editor) {
+      vscode.window.showWarningMessage('Open a markdown file to preview it.');
+      return;
+    }
+    await previews.show(editor.document, editor.viewColumn ?? vscode.ViewColumn.One);
+  });
+
+  register('mdreview.commentOnSelection', async () => {
+    const editor = markdownEditor();
+    if (!editor) {
+      vscode.window.showWarningMessage('Open a markdown file to add a comment.');
+      return;
+    }
+    if (editor.selection.isEmpty) {
+      vscode.window.showWarningMessage('Select the passage you want to comment on.');
+      return;
+    }
+    const draft = actions.beginCompose(editor);
+    if (!draft) return;
+    const body = await vscode.window.showInputBox({
+      prompt: 'Comment on the selected passage',
+      placeHolder: 'What should change here?',
+    });
+    if (body?.trim()) await actions.commitDraft(draft.draftId, body);
+    else actions.cancelDraft(draft.draftId);
+  });
+
+  register('mdreview.revealThread', async (arg: unknown) => {
     const id = idFrom(arg);
-    if (id) return ui.reveal(id);
+    if (!id) return;
+    focus.setActive(id, 'command');
+    await actions.reveal(id);
+    const found = session.findThread(id);
+    if (found) previews.get(found.state.docRelPath)?.focusThread(id);
   });
+
   register('mdreview.resolveThread', (arg: unknown) => {
     const id = idFrom(arg);
-    if (id) return ui.setStatus(id, 'resolved');
+    if (id) return actions.setStatus(id, 'resolved');
   });
+
   register('mdreview.unresolveThread', (arg: unknown) => {
     const id = idFrom(arg);
-    if (id) return ui.setStatus(id, 'open');
+    if (id) return actions.setStatus(id, 'open');
   });
 
   register('mdreview.deleteThread', async (arg: unknown) => {
     const id = idFrom(arg);
-    if (!id) return;
-    const choice = await vscode.window.showWarningMessage(
-      'Delete this thread and its history? Resolving keeps it instead.',
-      { modal: true },
-      'Delete',
-    );
-    if (choice === 'Delete') await ui.remove(id);
+    if (id) await actions.remove(id);
   });
 
   register('mdreview.reattachThread', async (arg: unknown) => {
     const id = idFrom(arg);
-    const editor = vscode.window.activeTextEditor;
+    const editor = markdownEditor();
     if (!id || !editor) return;
     if (editor.selection.isEmpty) {
       vscode.window.showWarningMessage(
@@ -121,12 +216,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
       return;
     }
-    const ok = await ui.reattach(id, editor);
+    const ok = await actions.reattach(id, editor);
     if (!ok) {
       vscode.window.showWarningMessage(
         'Could not re-attach — make sure the selection is in the document the comment belongs to.',
       );
     }
+  });
+
+  const step = async (delta: number) => {
+    const editor = markdownEditor();
+    if (!editor) return;
+    const rel = session.docRelPath(editor.document.uri);
+    if (!rel) return;
+    const spans = session.spans(rel).filter((s) => s.status !== 'resolved');
+    if (spans.length === 0) {
+      vscode.window.showInformationMessage('No open comments in this document.');
+      return;
+    }
+    const offset = editor.document.offsetAt(editor.selection.active);
+    const next =
+      delta > 0
+        ? (spans.find((s) => s.start > offset) ?? spans[0])
+        : ([...spans].reverse().find((s) => s.start < offset) ?? spans[spans.length - 1]);
+    await vscode.commands.executeCommand('mdreview.revealThread', next.id);
+  };
+
+  register('mdreview.nextThread', () => step(1));
+  register('mdreview.previousThread', () => step(-1));
+
+  register('mdreview.toggleInlineThreads', async () => {
+    const order = ['collapsed', 'expanded', 'off'] as const;
+    const next = order[(order.indexOf(inlineMode()) + 1) % order.length];
+    await vscode.workspace
+      .getConfiguration('mdreview')
+      .update('inlineThreads', next, vscode.ConfigurationTarget.Workspace);
+    vscode.window.showInformationMessage(`Inline comment threads: ${next}.`);
   });
 
   register('mdreview.sendToClaude', async () => {
@@ -146,7 +271,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       .getConfiguration('mdreview')
       .get('terminalName', 'claude')
       .toLowerCase();
-    const terminal = vscode.window.terminals.find((t) => t.name.toLowerCase().includes(needle));
+    // `includes('')` is true for every terminal, so an empty setting would type
+    // the prompt into whichever shell happened to be first.
+    const terminal = needle
+      ? vscode.window.terminals.find((t) => t.name.toLowerCase().includes(needle))
+      : undefined;
     // Nothing more than what you would type yourself. Claude reads the comments
     // through the MCP server, so there is no digest to hand over.
     const line = vscode.workspace.getConfiguration('mdreview').get('sendPrompt', '/review');

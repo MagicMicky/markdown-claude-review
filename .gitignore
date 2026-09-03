@@ -14,3 +14,6 @@ dist-test/
 
 # Per-machine Claude Code settings
 .claude/settings.local.json
+
+# Local sandbox for trying the extension out
+sandbox/

@@ -2,31 +2,32 @@
 
 [![CI](https://github.com/MagicMicky/markdown-claude-review/actions/workflows/ci.yml/badge.svg)](https://github.com/MagicMicky/markdown-claude-review/actions/workflows/ci.yml)
 
-Google-Docs-style comment threads on markdown files in VS Code, wired back to Claude Code over MCP.
+Google-Docs-style comment threads on markdown in VS Code, wired back to Claude Code
+over MCP.
 
-Claude writes the document. You comment on specific words, sentences and paragraphs.
-Claude reads your comments, edits the document, replies where it needs clarification,
-and resolves what it addressed. Everything is local files.
+Claude writes the document. You read it rendered, select a passage, and comment — the
+thread appears as a bubble in the margin beside it. Claude reads your comments, edits
+the document, replies where it needs clarification, and resolves what it addressed.
+Everything is local files.
 
 ## The loop
 
 1. Claude Code writes `docs/strategy.md`.
-2. You select a passage in VS Code and comment on it — same gutter UI as a GitHub PR review.
+2. You open the review preview (`Ctrl+K V`), select a passage, and comment on it.
 3. You type `/review` in Claude Code. Or just say "address my comments on the strategy doc".
 4. Claude calls `list_threads`, edits the doc, then `resolve_thread` (done) or
-   `reply_thread` (needs your input). Its replies appear in the comment bubble.
+   `reply_thread` (needs your input). Its replies appear in the bubble.
 5. Threads you have not resolved stay open. Nothing is ever silently dropped.
 
-There is no hand-off file and nothing to paste. The comment threads live behind an MCP
-server, so asking Claude for them in plain English is the whole interface. The
-**Send Review** button in the editor is a convenience that types `/review` for you.
+There is no hand-off file and nothing to paste. The threads live behind an MCP server,
+so asking Claude for them in plain English is the whole interface; `/review` is a
+shortcut, not a requirement.
 
 ## Install
 
 Nothing here is OS-specific: macOS, Linux and Windows all work. You need VS Code 1.90+,
 Node 18+, Claude Code, and the `code` CLI on your `PATH` (on macOS, run
-**Shell Command: Install 'code' command in PATH** from the command palette first). Every
-build step is plain `node`, so the same four commands run in `sh`, `zsh` and PowerShell.
+**Shell Command: Install 'code' command in PATH** from the command palette first).
 
 ```sh
 npm install
@@ -41,28 +42,58 @@ on `main`, and skip the toolchain.
 
 Then, in the workspace where you write documents:
 
-- Run **Markdown Review: Set Up Claude Code Integration** from the command palette. It writes
-  `.mcp.json` and a `/review` slash command into `.claude/commands/`.
+- Run **Markdown Review: Set Up Claude Code Integration** from the command palette. It
+  writes `.mcp.json` and a `/review` slash command into `.claude/commands/`.
 - Restart Claude Code in that workspace and approve the `markdown-review` server.
 
-The generated `.mcp.json` points at VS Code's bundled Node and the installed extension by
-absolute path, so it is machine-specific — if you commit it, everyone else re-runs the
-setup command on their own machine.
+The generated `.mcp.json` points at VS Code's bundled Node and the installed extension
+by absolute path, so it is machine-specific — if you commit it, everyone else re-runs
+the setup command on their own machine.
 
-## Using it
+The extension is disabled in [Restricted Mode](https://code.visualstudio.com/docs/editor/workspace-trust):
+it reads comment threads from files in the workspace, and the hand-off types a
+configurable line into a terminal. Trust the folder before using it.
+
+## Two surfaces
+
+**The review preview** is where you comment. It renders the document — using VS Code's
+own preview stylesheet, loaded from the built-in extension at runtime, so it looks like
+the preview you already know — and puts comment bubbles in the right margin, aligned to
+the passages they belong to.
+
+**The source editor** shows the same threads as VS Code comment threads, collapsed to a
+gutter marker and an underline so your prose never moves.
+
+Both are projections of the same state. A reply typed in either appears in the other.
 
 | Action | How |
 | --- | --- |
-| Comment | Select text in a `.md` file, click the `+` in the gutter, type, submit |
-| Reply | Type in the thread's reply box |
-| Resolve | Check icon in the thread title bar |
-| See every thread, including resolved | **Markdown Review** icon in the activity bar |
-| Hand off to Claude | Type `/review` in Claude Code — or the send icon in the panel, which types it for you |
-| Force a re-scan | **Markdown Review: Refresh Threads** from the palette, if state ever looks stale |
-| Re-attach a stale comment | Select the new text, then **Re-attach** on the thread in the panel |
+| Open the preview | `Ctrl+K V`, or the preview icon in the editor title bar |
+| Comment | Select rendered text, click **Comment**, type, `Ctrl+Enter` |
+| Comment from the source | Select text, `Ctrl+Alt+M`, or the gutter `+` |
+| Reply | Click a bubble, type in its reply box, `Ctrl+Enter` |
+| Resolve | **Resolve** on the bubble |
+| Jump to the source | Alt+click a passage in the preview |
+| Jump between comments | **Next / Previous Comment** from the palette |
+| Re-attach a stale comment | Select the new passage, then **Re-attach to selection** on the bubble |
+| Hand off to Claude | Type `/review` in Claude Code |
+| Force a re-scan | **Markdown Review: Refresh Threads**, if state ever looks stale |
 
-Open the built-in markdown preview beside the editor (`Ctrl+K V`) to read the rendered
-document while commenting on the source.
+Three visual layers, deliberately distinct: every open thread tints its passage faintly;
+a bar in the left margin tracks where the source editor's cursor is; and the thread you
+are actually in gets a strong tint and an expanded bubble.
+
+Ours replaces the built-in preview: it takes `Ctrl+K V` and `Ctrl+Shift+V`, and VS
+Code's own preview buttons hide themselves so the title bar shows one preview icon
+rather than three. The built-in preview is still on **Markdown: Open Preview** in the
+command palette.
+
+Set `mdreview.replaceBuiltInPreview` to `false` to reverse all of that in one go — the
+built-in buttons and keybindings come back, and the review preview moves to
+**Markdown Review: Open Review Preview** in the palette.
+
+`mdreview.inlineThreads` controls the editor layer: `collapsed` (default), `expanded`
+if you want threads to open in place, or `off` for preview-only.
 
 ### Thread states
 
@@ -73,37 +104,60 @@ document while commenting on the source.
 | **resolved** | Closed. Kept forever as history |
 | **stale** | The text it pointed at no longer exists. Kept and shown, never deleted |
 
-**answered** and **resolved** are not interchangeable. *answered* is whose-turn-it-is, and
-it is set automatically: whoever posts the last message flips the thread to the other side,
-so a Claude reply makes it *answered* and your reply back makes it *open* again. The
-conversation is still live. *resolved* is the end of the thread's life, and only ever
-happens on purpose — Claude calling `resolve_thread` after making the edit, or you clicking
-the check icon. Replies no longer move a resolved thread; reopen it with **Reopen Thread**
-in the panel if you want to keep going.
+**answered** and **resolved** are not interchangeable. *answered* is whose-turn-it-is,
+and it is set automatically: whoever posts the last message flips the thread to the
+other side, so a Claude reply makes it *answered* and your reply back makes it *open*
+again. The conversation is still live. *resolved* is the end of the thread's life, and
+only ever happens on purpose — Claude calling `resolve_thread` after making the edit, or
+you clicking **Resolve**.
 
-Claude only sees **open** and **stale** threads by default, so an *answered* thread is not
-waiting on Claude and a *resolved* one is out of the loop entirely.
+A resolved thread disappears from the preview, which is the live review surface. It is
+not gone: it stays in the review file and in the source editor's inline thread, where
+you can reopen it.
+
+Claude only sees **open** and **stale** threads by default, so an *answered* thread is
+not waiting on Claude and a *resolved* one is out of the loop entirely.
 
 ## How comments stay attached
 
-Comments store no line numbers. Claude rewrites files out-of-band, so anything positional
-would be wrong by the time it is read back. Instead each thread keeps a
+Comments store no line numbers. Claude rewrites files out-of-band, so anything
+positional would be wrong by the time it is read back. Instead each thread keeps a
 [W3C-style text quote selector](https://www.w3.org/TR/annotation-model/#text-quote-selector):
 the exact quote, ~48 characters either side, and the heading trail it sat under.
 
 On every save, anchors re-resolve through a cascade, most trustworthy first:
 
 1. Exact quote, unique in the document → **exact**
-2. Exact quote appearing several times → pick the occurrence whose surrounding text matches → **exact**
-3. Fuzzy paragraph match (Sørensen–Dice over character trigrams) *within the original section* → **drifted**
+2. Exact quote appearing several times → pick the occurrence whose surrounding text
+   agrees. Enough agreement → **exact**; little or none → **drifted**, because with
+   several identical passages the context is the only thing telling them apart
+3. Fuzzy paragraph match (Sørensen–Dice over character trigrams) *within the original
+   section* → **drifted**
 4. Fuzzy paragraph match document-wide, at a stricter threshold → **drifted**
 5. Nothing above threshold → **stale**
 
 A comment pointing confidently at the wrong paragraph is worse than one that admits it
-lost its place, so step 5 refuses to guess. Drifted threads keep showing the original
-wording, flagged as edited, so you can see what Claude changed under your comment.
+lost its place, so the cascade refuses to guess rather than always returning something.
+Drifted threads keep showing the original wording, flagged as edited, so you can see
+what Claude changed under your comment.
 
 Tune the bar with `mdreview.fuzzyThreshold` (default `0.62`).
+
+## How the preview knows what you selected
+
+A comment anchors to source characters, but you select *rendered* text — and the two are
+not the same string. Rather than reconstruct which characters were markup, the renderer
+labels every run of rendered text with the source offsets it came from, taken from
+markdown-it's own token stream.
+
+Highlighting and selection are then arithmetic on those offsets. That is what makes a
+comment work on a table cell, inside a fenced code block, on a `snake_case` identifier,
+across an HTML entity, or spanning several paragraphs — all cases where guessing what
+the page would say produced no highlight at all.
+
+Rendering pins `markdown-it@12`, the version VS Code's built-in preview bundles, with
+its options and its highlight.js alias map, so output matches rather than merely
+resembles it.
 
 ## Storage
 
@@ -113,11 +167,17 @@ One JSON file per document, mirroring its path:
 docs/strategy.md  ->  .review/docs/strategy.md.review.json
 ```
 
-Plain, diffable, greppable, commit it or don't. Writes go through a temp file and a
-rename, because Claude and the extension write it from different processes.
+Plain, diffable, greppable, commit it or don't. Nothing else is written; Claude reads
+threads through the MCP server, not through a generated hand-off file.
 
-Nothing else is written. Claude reads threads through the MCP server, not through a
-generated hand-off file.
+Two processes write these files — this extension and the MCP server — so both merge
+against what is on disk immediately before writing, unioning messages and resolving the
+rest by timestamp. Without that, whoever wrote second would silently revert the other:
+your resolve overwriting Claude's reply, or the reverse.
+
+A file that cannot be parsed is never written over. It is reported, and its threads are
+left alone until you fix it — the sidecar is the only copy of that history, and treating
+an unreadable file as an empty one would destroy it.
 
 ## MCP tools Claude gets
 
@@ -130,9 +190,10 @@ generated hand-off file.
 | `create_thread` | Flag an unverified claim in its own document and ask you about it |
 | `list_documents` | Which documents have open comments |
 
-The server also ships connect-time instructions telling Claude to reach for `list_threads`
-whenever you mention comments or feedback on a document — so plain English works without
-the slash command, and Claude will not go hunting for comments inside the markdown.
+The server also ships connect-time instructions telling Claude to reach for
+`list_threads` whenever you mention comments or feedback on a document — so plain
+English works without the slash command, and Claude will not go hunting for comments
+inside the markdown.
 
 ## What Claude is told to do
 
@@ -153,8 +214,8 @@ strategy or a set of goals:
   questions back to you belong in the text.
 - **Your comment is a pointer, not copy.** It says what is wrong; Claude decides how the
   prose should read, rather than transcribing your shorthand.
-- **Edits stay proportionate.** No restructuring or polishing passages nobody commented on.
-  Something else looks wrong? `create_thread` raises it instead of silently fixing it.
+- **Edits stay proportionate.** No restructuring or polishing passages nobody commented
+  on. Something else looks wrong? `create_thread` raises it instead of silently fixing it.
 - **Uncertainty stops the edit.** If Claude cannot establish the truth it leaves the
   passage alone and replies, rather than hedging or guessing in the document.
 
@@ -163,10 +224,10 @@ prompts follow.
 
 ## What Claude reads, and what that costs
 
-A paragraph judged in isolation gets edited into something that contradicts or repeats the
-one next to it — so Claude needs the surrounding document. Re-reading the whole file on
-every review round is the expensive way to get that, so `list_threads` groups threads by
-document and adapts:
+A paragraph judged in isolation gets edited into something that contradicts or repeats
+the one next to it — so Claude needs the surrounding document. Re-reading the whole file
+on every review round is the expensive way to get that, so `list_threads` groups threads
+by document and adapts:
 
 | Document | What comes back | Instruction |
 | --- | --- | --- |
@@ -195,20 +256,38 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 
 | Setting | Default | |
 | --- | --- | --- |
+| `mdreview.replaceBuiltInPreview` | `true` | Hide VS Code's preview buttons and take `Ctrl+K V` |
+| `mdreview.inlineThreads` | `collapsed` | Editor layer: `collapsed`, `expanded`, `off` |
+| `mdreview.highlightCommentedRanges` | `true` | Underline commented passages in the editor |
+| `mdreview.fuzzyThreshold` | `0.62` | Similarity needed to re-attach to rewritten prose |
 | `mdreview.reviewDir` | `.review` | Where threads are stored |
 | `mdreview.author` | git `user.name` | Name on your comments |
 | `mdreview.terminalName` | `claude` | Substring matching your Claude Code terminal |
-| `mdreview.sendPrompt` | `/review` | What the Send Review button types for you |
-| `mdreview.highlightCommentedRanges` | `true` | Underline commented passages |
-| `mdreview.fuzzyThreshold` | `0.62` | Similarity needed to re-attach to rewritten prose |
+| `mdreview.sendPrompt` | `/review` | What the Send Review command types for you |
+
+The last four are machine-scoped on purpose: `sendPrompt` and `terminalName` decide what
+gets typed into a terminal, so a cloned repository must not be able to set them.
+
+The preview also honours VS Code's own `markdown.preview.*` settings — `fontFamily`,
+`fontSize`, `lineHeight`, `breaks`, `linkify`, `typographer`, the scroll-sync pair — and
+your `markdown.styles`, so it behaves like the built-in preview you have already
+configured.
 
 ## Development
 
 ```sh
+npm run typecheck  # root project and the webview project
+npm test           # core suite plus the webview's DOM tests
 npm run watch      # rebuild on change
-npm test           # anchoring, context, store and guidance tests
-npm run typecheck
+npm run build      # three bundles: extension, MCP server, preview webview
 ```
 
-Press `F5` in VS Code to launch an Extension Development Host.
+Press `F5` and pick **Run Extension (sandbox)** to launch an Extension Development Host
+already opened on `sandbox/`, which is gitignored and yours to scribble in.
+
+Tests run as two `tsc` projects. Most of them are plain `node:test` over `src/core`. The
+webview's DOM mapping is tested separately with jsdom against real renderer output,
+because that layer is where the bugs have actually been, and the DOM lib must not leak
+into `src/core`.
+
 See [CLAUDE.md](CLAUDE.md) for the invariants worth not breaking.

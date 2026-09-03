@@ -2,6 +2,13 @@ import type { Anchor, ResolvedAnchor } from './types.js';
 
 export const CONTEXT_CHARS = 48;
 
+/**
+ * Characters of surrounding text that must agree before an ambiguous quote is
+ * called an exact match. Below this we still return the best candidate, but
+ * marked drifted so the UI shows it as uncertain rather than settled.
+ */
+const AMBIGUOUS_CONTEXT_CHARS = 8;
+
 /* ------------------------------------------------------------------ *
  * Document structure
  * ------------------------------------------------------------------ */
@@ -267,7 +274,17 @@ export function resolveAnchor(
         bestIdx = h;
       }
     }
-    return { start: bestIdx, end: bestIdx + quote.length, kind: 'exact', score: 1 };
+    // With several identical passages, the surrounding text is the only thing
+    // telling them apart. Reporting the first one as `exact` with score 1 when
+    // nothing around it matched is precisely the confident-but-wrong answer
+    // this module exists to avoid: say `drifted` so the surfaces flag it.
+    const confident = bestScore >= AMBIGUOUS_CONTEXT_CHARS;
+    return {
+      start: bestIdx,
+      end: bestIdx + quote.length,
+      kind: confident ? 'exact' : 'drifted',
+      score: confident ? 1 : 0.5,
+    };
   }
 
   // Fuzzy matching on a handful of characters is noise, not signal.

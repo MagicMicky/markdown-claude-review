@@ -33,13 +33,23 @@ Press `F5` in VS Code to launch an Extension Development Host.
 | --- | --- |
 | `src/core/` | Everything with no VS Code dependency. All tests live against this. |
 | `src/extension/` | The VS Code UI layer. Untested — no extension-host harness. |
+| `src/webview/` | The preview's client script, bundled to `dist/preview.js`. |
 | `src/mcp/` | The stdio MCP server Claude Code talks to. |
 | `src/test/` | `node:test` suites, `src/core` only. |
+| `media/` | Static webview assets. Shipped as-is; do not add them to `.vscodeignore`. |
 
-**`src/core/` must never import `vscode`.** Both bundles depend on it, and it is the
-only part that can be tested. When logic is worth testing, that is where it goes —
-`mergeMcpConfig` and `sectionText` were pulled out of the extension for exactly that
-reason.
+**`src/core/` must never import `vscode`.** All three bundles depend on it, and it is
+the only part that can be tested. It is not "pure domain logic" — it is "code that has
+tests", which is why `mergeMcpConfig`, `sectionText` and `rendermap` live there. When logic is worth testing, that is where it goes —
+`mergeMcpConfig`, `sectionText`, `rendermap` and the card view-model live there for
+exactly that reason.
+
+**`src/webview/` must never import `vscode` or `node:*`, and neither may anything in
+`src/core/` that it pulls in.** `src/core/store.ts` imports `node:fs`, so a stray
+re-export would reach the webview. The webview's esbuild target uses
+`platform: 'browser'` so that fails the build instead of showing a blank panel. It is
+typechecked separately (`tsconfig.webview.json`) because it needs `lib: ["DOM"]`, which
+must not leak into the root project.
 
 ## Invariants worth not breaking
 
@@ -64,9 +74,38 @@ call sites; a test asserts every rule reaches the prose form.
 **Writes are atomic.** `writeReview` goes through a temp file and a rename, because the
 extension and the MCP server write the same JSON from different processes.
 
+**Every mutation goes through `ReviewActions`, and every surface is a subscriber.** The
+inline threads, the decorations and the preview all render `Session` and post commands
+back; none of them owns state or calls another. That is what keeps them in sync, and
+what lets `inlineThreads: 'off'` dispose the whole comment controller without taking
+any command with it. Resolved threads are hidden in the preview and kept in the inline
+widget, so the closed history has exactly one home. Two events, not one: `onDidChange` for thread content,
+`onDidReanchor` for offsets moving while typing.
+
+**Never reassign a `CommentThread.collapsibleState` on update.** Set it at creation and
+in the reveal path only. Reassigning on every fan-out snaps a thread the user just
+expanded shut the next time anything changes — which, with the collapsed default, is
+any keystroke.
+
+**Comment bodies never reach an HTML sink.** They are written by another process into a
+JSON file, so `src/webview/preview.ts` sets them with `textContent` only, and markdown
+is deliberately not rendered in a bubble.
+
+The one `innerHTML` is the rendered document itself (`doc.innerHTML = m.html`), which is
+inherent to being a preview — VS Code's own does the same, with the same `html: true`
+markdown-it option, so documents that embed HTML render at all. What makes that safe is
+the CSP in `src/extension/preview.ts`: `script-src` is nonce-only, so neither a
+`<script>` tag nor an inline `onerror=` in the document can execute, and
+`default-src 'none'` blocks frames and outbound requests.
+
 **Config merges never clobber.** `mergeMcpConfig` refuses to write when an existing
 `.mcp.json` does not parse, rather than replacing a file that may hold other servers.
 Same for `/review`: a command without our marker prompts before being overwritten.
+
+**A review file is never overwritten from a bad read.** `loadReview` distinguishes
+absent from unreadable, and both `Session` and the MCP server refuse to write over the
+latter — the sidecar is the only copy of that comment history. Both also merge against
+disk before writing, because the two processes each hold a whole file.
 
 **Context is rationed.** `list_threads` sends section excerpts and an outline only for
 documents longer than `SHORT_DOCUMENT_LINES` (`src/core/context.ts`); shorter ones are

@@ -51,6 +51,24 @@
         "category": "Markdown Review"
       },
       {
+        "command": "mdreview.commentOnSelection",
+        "title": "Add Comment on Selection",
+        "category": "Markdown Review",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "mdreview.openPreviewToSide",
+        "title": "Open Review Preview to the Side",
+        "category": "Markdown Review",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "mdreview.openPreview",
+        "title": "Open Review Preview",
+        "category": "Markdown Review",
+        "icon": "$(preview)"
+      },
+      {
         "command": "mdreview.resolveThread",
         "title": "Resolve Thread",
         "category": "Markdown Review",
@@ -69,12 +87,6 @@
         "icon": "$(trash)"
       },
       {
-        "command": "mdreview.sendToClaude",
-        "title": "Send Review to Claude Code",
-        "category": "Markdown Review",
-        "icon": "$(send)"
-      },
-      {
         "command": "mdreview.reattachThread",
         "title": "Re-attach Stale Thread to Selection",
         "category": "Markdown Review",
@@ -86,8 +98,31 @@
         "category": "Markdown Review"
       },
       {
+        "command": "mdreview.nextThread",
+        "title": "Next Comment",
+        "category": "Markdown Review",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "mdreview.previousThread",
+        "title": "Previous Comment",
+        "category": "Markdown Review",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "mdreview.toggleInlineThreads",
+        "title": "Toggle Inline Comment Threads",
+        "category": "Markdown Review"
+      },
+      {
+        "command": "mdreview.sendToClaude",
+        "title": "Send Review to Claude Code",
+        "category": "Markdown Review",
+        "icon": "$(send)"
+      },
+      {
         "command": "mdreview.setupClaude",
-        "title": "Set Up Claude Code Integration (.mcp.json)",
+        "title": "Set Up Claude Code Integration",
         "category": "Markdown Review"
       },
       {
@@ -97,23 +132,6 @@
         "icon": "$(refresh)"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "mdreview",
-          "title": "Markdown Review",
-          "icon": "$(comment-discussion)"
-        }
-      ]
-    },
-    "views": {
-      "mdreview": [
-        {
-          "id": "mdreview.threads",
-          "name": "Comment Threads"
-        }
-      ]
-    },
     "menus": {
       "commandPalette": [
         {
@@ -143,6 +161,26 @@
         {
           "command": "mdreview.reattachThread",
           "when": "false"
+        },
+        {
+          "command": "mdreview.commentOnSelection",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.nextThread",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.previousThread",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.openPreview",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.openPreviewToSide",
+          "when": "editorLangId == markdown"
         }
       ],
       "comments/commentThread/context": [
@@ -174,33 +212,18 @@
           "when": "commentController == mdreview"
         }
       ],
-      "view/title": [
+      "editor/context": [
         {
-          "command": "mdreview.sendToClaude",
-          "group": "navigation@1",
-          "when": "view == mdreview.threads"
-        },
-        {
-          "command": "mdreview.refresh",
-          "group": "navigation@2",
-          "when": "view == mdreview.threads"
+          "command": "mdreview.commentOnSelection",
+          "group": "1_modification@1",
+          "when": "editorLangId == markdown"
         }
       ],
-      "view/item/context": [
+      "editor/title": [
         {
-          "command": "mdreview.reattachThread",
-          "group": "inline@1",
-          "when": "view == mdreview.threads && viewItem == thread.stale"
-        },
-        {
-          "command": "mdreview.resolveThread",
-          "group": "inline@2",
-          "when": "view == mdreview.threads && viewItem =~ /^thread\\.(open|answered|stale)$/"
-        },
-        {
-          "command": "mdreview.unresolveThread",
-          "group": "inline@2",
-          "when": "view == mdreview.threads && viewItem == thread.resolved"
+          "command": "mdreview.openPreviewToSide",
+          "group": "navigation",
+          "when": "editorLangId == markdown && mdreview.replacesPreview"
         }
       ]
     },
@@ -210,22 +233,25 @@
         "mdreview.reviewDir": {
           "type": "string",
           "default": ".review",
-          "description": "Directory (relative to the workspace root) where comment threads and review requests are stored."
+          "description": "Directory (relative to the workspace root) where comment threads and review requests are stored.",
+          "scope": "machine"
         },
         "mdreview.author": {
           "type": "string",
           "default": "",
-          "description": "Name recorded as the author of your comments. Defaults to your git user.name, else 'You'."
+          "description": "Name recorded as the author of your comments. Defaults to your git user.name, else 'You'.",
+          "scope": "machine"
         },
         "mdreview.terminalName": {
           "type": "string",
           "default": "claude",
-          "description": "Substring used to find the Claude Code terminal when sending a review."
+          "description": "Substring used to find the Claude Code terminal when sending a review.",
+          "scope": "machine"
         },
         "mdreview.highlightCommentedRanges": {
           "type": "boolean",
           "default": true,
-          "description": "Show a subtle highlight behind text that has comment threads attached."
+          "description": "Underline commented passages in the editor, and highlight the one the cursor is in."
         },
         "mdreview.fuzzyThreshold": {
           "type": "number",
@@ -235,27 +261,80 @@
         "mdreview.sendPrompt": {
           "type": "string",
           "default": "/review",
-          "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger."
+          "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger.",
+          "scope": "machine",
+          "markdownDescription": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger. Machine-scoped: it is typed into a terminal, so a workspace must not be able to set it."
+        },
+        "mdreview.inlineThreads": {
+          "type": "string",
+          "enum": [
+            "collapsed",
+            "expanded",
+            "off"
+          ],
+          "default": "collapsed",
+          "enumDescriptions": [
+            "A gutter marker and an underline in the editor. Never displaces prose; click the marker to open a thread in place.",
+            "Threads open inline in the editor, pushing the surrounding text down.",
+            "No inline threads. The editor shows only an underline and a gutter marker, and the review preview is where you comment."
+          ],
+          "description": "How comment threads appear in the source editor. The review preview is unaffected."
+        },
+        "mdreview.replaceBuiltInPreview": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Make the review preview *the* markdown preview: hide VS Code's own preview buttons from the editor title bar and take `Ctrl+K V` / `Ctrl+Shift+V`. Turn this off to get the built-in preview's buttons and keybindings back; the review preview is then on **Markdown Review: Open Review Preview** in the command palette."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "mdreview.commentOnSelection",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorTextFocus && editorLangId == markdown"
+      },
+      {
+        "command": "mdreview.openPreviewToSide",
+        "key": "ctrl+k v",
+        "mac": "cmd+k v",
+        "when": "editorLangId == markdown && mdreview.replacesPreview"
+      },
+      {
+        "command": "mdreview.openPreview",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "editorLangId == markdown && mdreview.replacesPreview"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "typecheck": "tsc --noEmit",
-    "test": "node --test dist-test/test/*.test.js",
-    "pretest": "tsc -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
+    "test": "node --test dist-test/test/*.test.js dist-test/test/webview/*.test.js",
+    "pretest": "node -e \"fs.rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && tsc -p tsconfig.webviewtest.json",
     "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies -o markdown-claude-review.vsix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^12.3.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/markdown-it": "^12.2.3",
     "@types/node": "^22.9.0",
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.24.0",
+    "jsdom": "^25.0.1",
     "typescript": "^5.6.3"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Comment threads are read from files in the workspace, and the review hand-off types a configurable line into a terminal."
+    }
   }
 }

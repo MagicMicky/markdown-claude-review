@@ -6,5 +6,9 @@
     "rootDir": "src",
     "noUnusedLocals": false
   },
-  "include": ["src/core/**/*.ts", "src/test/**/*.ts"]
+  "include": [
+    "src/core/**/*.ts",
+    "src/test/*.ts",
+    "src/extension/markdown.ts"
+  ]
 }
