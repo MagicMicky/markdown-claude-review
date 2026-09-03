@@ -50,30 +50,111 @@ jobs:
       - run: npm test
       - run: npm run package
 
+      # Idempotent on purpose. When a publish step below fails on an expired
+      # token, the fix is to rotate the secret and re-run this workflow — which
+      # only works if re-creating an existing release is not itself an error.
       - name: Publish release
         run: |
-          gh release create "$GITHUB_REF_NAME" markdown-claude-review.vsix \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" markdown-claude-review.vsix --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" markdown-claude-review.vsix \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Marketplace publishing, dormant until the secrets exist. Adding either
-      # one turns the matching step on with no edit here. Both also require
-      # dropping "private": true from package.json — vsce refuses to publish a
-      # package marked private.
+      # Registry publishing, skipped when the matching secret is absent.
       #
-      # Note that these are the only maintenance cost in this repo that comes
-      # with a deadline: Azure DevOps PATs expire after a year at most, and an
-      # expired one turns every release red until you rotate it.
+      # Both continue-on-error so that one dead credential cannot stop the
+      # other registry from getting the release; the report step below turns
+      # either failure back into a red build, with instructions.
       - name: Publish to the VS Code Marketplace
+        id: marketplace
         if: env.VSCE_PAT != ''
+        continue-on-error: true
         run: npx vsce publish --packagePath markdown-claude-review.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX
+        id: openvsx
         if: env.OVSX_PAT != ''
+        continue-on-error: true
         run: npx --yes ovsx publish markdown-claude-review.vsix -p "$OVSX_PAT"
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+      # The failure that this repo is most likely to hit is an expired
+      # credential, months or years after anyone last looked at this file. The
+      # notification email links here, so the run summary is where the recovery
+      # steps have to be — not in a doc the reader would have to go find.
+      - name: Explain publish failures
+        if: steps.marketplace.outcome == 'failure' || steps.openvsx.outcome == 'failure'
+        env:
+          MARKETPLACE: ${{ steps.marketplace.outcome }}
+          OPENVSX: ${{ steps.openvsx.outcome }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "## Publishing failed for \`$GITHUB_REF_NAME\`"
+            echo
+            echo "The GitHub Release itself was created and \`markdown-claude-review.vsix\`"
+            echo "is attached to it. Installing from the release is unaffected — only the"
+            echo "registry upload failed, so existing users simply will not be offered an"
+            echo "automatic update to this version yet."
+            echo
+            echo "**The usual cause is an expired publishing token.** Azure DevOps personal"
+            echo "access tokens expire after a year at most, and nothing warns you before"
+            echo "they do."
+            echo
+
+            if [ "$MARKETPLACE" = failure ]; then
+              echo "### VS Code Marketplace — rotate \`VSCE_PAT\`"
+              echo
+              echo "1. Sign in to <https://dev.azure.com> with the Microsoft account that owns"
+              echo "   the \`magicmicky\` publisher, and open **User settings → Personal Access"
+              echo "   Tokens → New Token**."
+              echo "2. Set **Organization** to \`All accessible organizations\`. A token scoped to"
+              echo "   a single organization fails authentication with an unhelpful 401 — this"
+              echo "   is the most common mistake."
+              echo "3. Set **Scopes** to \`Custom defined\`, then check **Marketplace → Manage**."
+              echo "4. Set the expiration (one year is the maximum) and copy the token; it is"
+              echo "   shown only once."
+              echo "5. Store it:"
+              echo
+              echo '   ```sh'
+              echo "   gh secret set VSCE_PAT --repo $REPO"
+              echo '   ```'
+              echo
+              echo "Publisher management lives at <https://marketplace.visualstudio.com/manage>."
+              echo
+            fi
+
+            if [ "$OPENVSX" = failure ]; then
+              echo "### Open VSX — rotate \`OVSX_PAT\`"
+              echo
+              echo "Open VSX tokens do not expire, so a failure here is more likely a revoked"
+              echo "token, an unsigned publisher agreement, or a transient registry outage —"
+              echo "check the step log before assuming the credential is at fault."
+              echo
+              echo "1. Sign in to <https://open-vsx.org>, open **Settings → Access Tokens**, and"
+              echo "   generate a new one. Confirm the publisher agreement is still signed."
+              echo "2. Store it:"
+              echo
+              echo '   ```sh'
+              echo "   gh secret set OVSX_PAT --repo $REPO"
+              echo '   ```'
+              echo
+            fi
+
+            echo "### Then re-run"
+            echo
+            echo "Use **Re-run failed jobs** on this run. The release step is idempotent, so"
+            echo "re-running against an existing tag re-uploads the asset rather than failing."
+            echo "No new tag or version bump is needed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error title=Publishing failed — likely an expired token::The GitHub Release was created successfully; only the registry upload failed. See this run's summary for how to rotate the credential and re-run."
+          exit 1

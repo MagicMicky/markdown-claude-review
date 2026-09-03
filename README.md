@@ -300,3 +300,27 @@ because that layer is where the bugs have actually been, and the DOM lib must no
 into `src/core`.
 
 See [CLAUDE.md](CLAUDE.md) for the invariants worth not breaking.
+
+## Releasing
+
+Releases are cut from a version tag, never from a merge to `main`:
+
+```sh
+npm version patch          # or minor / major — writes package.json and tags
+git push --follow-tags
+```
+
+That runs the checks, packages the extension, creates a GitHub Release with the `.vsix`
+attached, and publishes to the VS Code Marketplace and Open VSX. The tag must match
+`package.json`; the workflow fails early if it does not.
+
+Publishing needs two repository secrets, `VSCE_PAT` and `OVSX_PAT`. Either one being
+absent skips its registry and leaves the rest of the release intact.
+
+`VSCE_PAT` is an Azure DevOps personal access token, scoped to **all accessible
+organizations** with the **Marketplace → Manage** permission, and it expires after a
+year at most. When it lapses, the release workflow fails with the rotation steps printed
+in the run summary — the GitHub Release and its `.vsix` are created first, so an expired
+token delays the registry update without blocking the release itself. Rotate the secret
+and use **Re-run failed jobs**; the release step is idempotent and no version bump is
+needed.
