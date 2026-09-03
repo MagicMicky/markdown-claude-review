@@ -1,10 +1,22 @@
-# Cut a release from a version tag.
+# Releases, cut two ways.
 #
-#   npm version patch   # or minor / major — writes package.json + a v* tag
-#   git push --follow-tags
+# Automatically: any change to main that affects what ships gets a patch
+# release. That is what carries an auto-merged Dependabot update through to
+# the Marketplace, and so to an installed editor — without it those updates
+# land on main and stop there, which makes the whole auto-merge chain
+# decorative.
 #
-# That produces a permanent GitHub Release with the .vsix attached, which is
-# how the extension gets onto another machine:
+# Deliberately, for a minor or major: push a tag and this releases exactly it.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Note that a tag pushed by this workflow cannot trigger another workflow —
+# GitHub suppresses that to prevent recursion — so the tag has to be created
+# and released within one run rather than handed to a separate tagging job.
+# That is also what makes the automatic path safe from looping.
+#
+# Every release produces a permanent GitHub Release with the .vsix attached,
+# which is how the extension gets onto a machine without a toolchain:
 #
 #   gh release download -R MagicMicky/markdown-claude-review -p '*.vsix'
 #   code --install-extension markdown-claude-review.vsix
@@ -16,9 +28,25 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    # Changes that cannot alter the packaged extension must not spend a
+    # version number. Note this also excludes .github, so a Dependabot bump of
+    # an action releases nothing — correctly, since no shipped byte moved.
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+      - 'LICENSE'
+      - '.vscode/**'
+      - '.gitignore'
+      - '.vscodeignore'
 
 permissions:
   contents: write
+
+# Two merges in quick succession must not race for the same version number.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -26,6 +54,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The next patch number is derived from the tag history, so the
+          # default shallow fetch is not enough.
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v7
         with:
@@ -34,36 +67,85 @@ jobs:
 
       - run: npm ci
 
-      # A tag that disagrees with package.json produces a release whose asset
-      # reports a different version than the release itself, and VS Code
-      # believes the manifest. Fail loudly instead.
-      - name: Check tag matches package.json
+      # The released version is derived, never read from the committed
+      # package.json. A patch release triggered by an auto-merged dependency
+      # bump has nobody around to edit a version field first, and a bot
+      # committing one back to main would have to get past branch protection.
+      # Tags are the version history instead; package.json is set to match at
+      # build time so the packaged manifest and the release always agree.
+      #
+      # The committed version therefore only sets the floor for the very first
+      # release. To move to a new minor or major, push that tag by hand and
+      # subsequent patches continue from it.
+      - name: Determine version
+        id: version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          pkg="$(node -p "require('./package.json').version")"
-          if [ "$tag" != "$pkg" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
-            exit 1
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "Releasing $version, from the pushed tag."
+          else
+            # A re-run must not burn a fresh version number. If an earlier
+            # attempt already tagged this commit — it tags before publishing,
+            # so a failed publish leaves exactly that state — release the same
+            # version again. This is what makes the recovery instructions in
+            # the failure summary ("rotate the secret, re-run") true.
+            already="$(git tag --points-at HEAD -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)"
+            latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)"
+
+            if [ -n "$already" ]; then
+              version="${already#v}"
+              echo "This commit is already tagged $already; re-releasing that version."
+            elif [ -z "$latest" ]; then
+              version="$(node -p "require('./package.json').version")"
+              echo "No release tags yet; starting from package.json at $version."
+            else
+              version="$(node -p "
+                const p = '${latest#v}'.split('.').map(Number);
+                [p[0], p[1], p[2] + 1].join('.');
+              ")"
+              echo "Latest tag is $latest; releasing $version."
+            fi
           fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set the packaged version
+        run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - run: npm run typecheck
       - run: npm test
       - run: npm run package
+
+      # Created before anything is published, so a later failure leaves the
+      # tag pointing at exactly the commit that was built and tested.
+      - name: Tag the release
+        if: github.ref_type != 'tag'
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists, from an earlier attempt at this commit."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
 
       # Idempotent on purpose. When a publish step below fails on an expired
       # token, the fix is to rotate the secret and re-run this workflow — which
       # only works if re-creating an existing release is not itself an error.
       - name: Publish release
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" markdown-claude-review.vsix --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" markdown-claude-review.vsix --clobber
           else
-            gh release create "$GITHUB_REF_NAME" markdown-claude-review.vsix \
-              --title "$GITHUB_REF_NAME" \
+            gh release create "$TAG" markdown-claude-review.vsix \
+              --title "$TAG" \
               --generate-notes
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
 
       # Registry publishing, skipped when the matching secret is absent.
       #
@@ -96,9 +178,10 @@ jobs:
           MARKETPLACE: ${{ steps.marketplace.outcome }}
           OPENVSX: ${{ steps.openvsx.outcome }}
           REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           {
-            echo "## Publishing failed for \`$GITHUB_REF_NAME\`"
+            echo "## Publishing failed for \`$TAG\`"
             echo
             echo "The GitHub Release itself was created and \`markdown-claude-review.vsix\`"
             echo "is attached to it. Installing from the release is unaffected — only the"

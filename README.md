@@ -303,16 +303,28 @@ See [CLAUDE.md](CLAUDE.md) for the invariants worth not breaking.
 
 ## Releasing
 
-Releases are cut from a version tag, never from a merge to `main`:
+Anything that reaches `main` and can change what ships is released as a patch,
+automatically — including an auto-merged dependency update. Changes that cannot affect
+the packaged extension (documentation, workflows, editor config) are excluded, so they
+do not spend a version number.
+
+For a minor or major, push the tag yourself:
 
 ```sh
-npm version patch          # or minor / major — writes package.json and tags
-git push --follow-tags
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
-That runs the checks, packages the extension, creates a GitHub Release with the `.vsix`
-attached, and publishes to the VS Code Marketplace and Open VSX. The tag must match
-`package.json`; the workflow fails early if it does not.
+Subsequent automatic patches continue from whatever the newest tag is, so a hand-pushed
+`v0.2.0` makes the next automatic release `v0.2.1`.
+
+Either path runs the checks, packages the extension, tags the commit, creates a GitHub
+Release with the `.vsix` attached, and publishes to the VS Code Marketplace and Open VSX.
+
+The released version comes from the tag history rather than from the committed
+`package.json`, which is set to match at build time. Nobody is present to edit a version
+field during an automatic release, and a bot committing one back to `main` would have to
+be exempted from branch protection to do it. The committed version only sets the floor
+for the first release.
 
 Publishing needs two repository secrets, `VSCE_PAT` and `OVSX_PAT`. Either one being
 absent skips its registry and leaves the rest of the release intact.
