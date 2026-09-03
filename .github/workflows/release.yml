@@ -152,19 +152,38 @@ jobs:
       # Both continue-on-error so that one dead credential cannot stop the
       # other registry from getting the release; the report step below turns
       # either failure back into a red build, with instructions.
+      # --skip-duplicate so that re-running a release whose version already
+      # reached the registry is a no-op rather than an error. The recovery path
+      # for a failed publish is to re-run, and the version does not change on a
+      # re-run, so this is what stops the second registry's retry from being
+      # blocked by the first registry's success.
       - name: Publish to the VS Code Marketplace
         id: marketplace
         if: env.VSCE_PAT != ''
         continue-on-error: true
-        run: npx vsce publish --packagePath markdown-claude-review.vsix
+        timeout-minutes: 10
+        run: npx vsce publish --packagePath markdown-claude-review.vsix --skip-duplicate
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      # Open VSX refuses to publish into a namespace that does not exist yet,
+      # and creating one is a one-off that would otherwise be an undocumented
+      # manual prerequisite. It errors when the namespace is already there,
+      # which on every release after the first is the expected case.
+      - name: Ensure the Open VSX namespace exists
+        if: env.OVSX_PAT != ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npx ovsx create-namespace magicmicky -p "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
       - name: Publish to Open VSX
         id: openvsx
         if: env.OVSX_PAT != ''
         continue-on-error: true
-        run: npx --yes ovsx publish markdown-claude-review.vsix -p "$OVSX_PAT"
+        timeout-minutes: 10
+        run: npx ovsx publish markdown-claude-review.vsix -p "$OVSX_PAT" --skip-duplicate
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
