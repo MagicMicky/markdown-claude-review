@@ -23,7 +23,6 @@
     "mcp",
     "documentation"
   ],
-  "private": true,
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=18"
@@ -314,20 +313,20 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "test": "node --test dist-test/test/*.test.js dist-test/test/webview/*.test.js",
     "pretest": "node -e \"fs.rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && tsc -p tsconfig.webviewtest.json",
-    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies -o markdown-claude-review.vsix"
+    "package": "npm run build && vsce package --no-dependencies -o markdown-claude-review.vsix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "highlight.js": "^11.12.0",
-    "markdown-it": "^12.3.2",
+    "markdown-it": "^15.0.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/jsdom": "^21.1.7",
-    "@types/markdown-it": "^12.2.3",
     "@types/node": "^22.9.0",
     "@types/vscode": "^1.90.0",
-    "esbuild": "^0.24.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3"
   },

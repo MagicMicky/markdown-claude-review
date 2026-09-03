@@ -1,0 +1,32 @@
+# Merge Dependabot's non-breaking updates once CI has passed.
+#
+# This does not bypass anything: --auto queues the merge behind the required
+# status checks on main, so a bump that breaks the build sits as an open PR
+# instead of landing. Majors are excluded — they are exactly the ones where a
+# green build does not mean the extension still works.
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+
+      # For a grouped PR this reports the highest bump in the group, so one
+      # major anywhere in the batch holds the whole PR back.
+      - name: Enable auto-merge
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

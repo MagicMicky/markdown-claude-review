@@ -1,0 +1,35 @@
+# Dependency updates for a repo that is not actively developed.
+#
+# The shape here assumes nobody is watching: minor and patch bumps are grouped
+# into a single PR that .github/workflows/automerge.yml merges once CI is green,
+# and majors open individually so they wait for a human. If you stop reading
+# notifications entirely, the worst case is a stack of open major PRs — never a
+# silent change to what ships.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+    groups:
+      # One PR for everything non-breaking, so auto-merge has one thing to do
+      # per week instead of eight.
+      minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ['*']
