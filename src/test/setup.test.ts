@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isOurCommand, mergeMcpConfig, COMMAND_MARKER, type McpServerEntry } from '../core/setup.js';
+import {
+  COMMAND_MARKER,
+  COMMAND_NAME,
+  LEGACY_COMMAND_NAME,
+  isOurCommand,
+  mergeMcpConfig,
+  readMcpEntry,
+  stalePath,
+  type McpServerEntry,
+} from '../core/setup.js';
 
 const ENTRY: McpServerEntry = { command: '/usr/bin/node', args: ['/ext/dist/mcp.js'] };
 
@@ -76,7 +85,81 @@ test('re-running setup reports that it replaced its own entry', () => {
   assert.deepEqual(JSON.parse(r.json).mcpServers['markdown-review'], ENTRY);
 });
 
+test('the generated command does not take a name Claude Code already has', () => {
+  // /review is a Claude Code built-in. Naming ours the same means a workspace
+  // that never ran setup gets a code review out of the hand-off instead of an
+  // unknown-command error — a failure that looks like success. If this ever
+  // gets "simplified" back to a shorter name, it has to be an unused one.
+  assert.notEqual(COMMAND_NAME, 'review');
+  assert.notEqual(COMMAND_NAME, LEGACY_COMMAND_NAME);
+});
+
 test('recognises its own generated slash command', () => {
   assert.equal(isOurCommand(`---\ndescription: x\n---\n${COMMAND_MARKER}\nbody`), true);
   assert.equal(isOurCommand('---\ndescription: my own review command\n---\nDo my thing.'), false);
+});
+
+/* ---------------- reading back what we wrote ---------------- */
+
+const CONFIG = JSON.stringify({
+  mcpServers: {
+    'markdown-review': { command: '/vscode/bin/abc/node', args: ['/store/mcp.js'], env: { A: '1' } },
+    other: { command: 'x', args: [] },
+  },
+});
+
+test('reads back our own entry and leaves the others alone', () => {
+  const e = readMcpEntry(CONFIG, 'markdown-review');
+  assert.deepEqual(e, {
+    command: '/vscode/bin/abc/node',
+    args: ['/store/mcp.js'],
+    env: { A: '1' },
+  });
+});
+
+test('an absent, unparseable or malformed entry reads as nothing to repair', () => {
+  assert.equal(readMcpEntry(CONFIG, 'not-ours'), undefined);
+  assert.equal(readMcpEntry(undefined, 'markdown-review'), undefined);
+  assert.equal(readMcpEntry('{ broken', 'markdown-review'), undefined);
+  // Refusing to parse it is the point: mergeMcpConfig will not write over a file
+  // it cannot read, so reporting an entry here would start a repair that cannot finish.
+  assert.equal(readMcpEntry(JSON.stringify({ mcpServers: { 'markdown-review': 7 } }), 'markdown-review'), undefined);
+  assert.equal(
+    readMcpEntry(JSON.stringify({ mcpServers: { 'markdown-review': { command: 'n' } } }), 'markdown-review'),
+    undefined,
+    'an entry with no args is not one of ours',
+  );
+});
+
+/* ---------------- rot ---------------- */
+
+const ENTRY_ON_DISK: McpServerEntry = { command: '/vscode/bin/abc/node', args: ['/store/mcp.js'] };
+const all = () => true;
+
+test('an entry pointing at live paths is left as it is', () => {
+  assert.equal(stalePath(ENTRY_ON_DISK, all), null);
+});
+
+test('a VS Code update is reported as the interpreter going, not the server', () => {
+  const gone = (p: string) => p !== '/vscode/bin/abc/node';
+  assert.equal(stalePath(ENTRY_ON_DISK, gone), 'interpreter');
+});
+
+test('an extension update is reported as the server going', () => {
+  const gone = (p: string) => p !== '/store/mcp.js';
+  assert.equal(stalePath(ENTRY_ON_DISK, gone), 'server');
+});
+
+test('nothing registered is nothing to repair, not something to create', () => {
+  // Repair must never enable a workspace nobody enabled.
+  assert.equal(stalePath(undefined, () => false), null);
+});
+
+test('an interpreter someone repointed by hand survives while it works', () => {
+  const theirs: McpServerEntry = { command: '/usr/local/bin/node', args: ['/store/mcp.js'] };
+  assert.equal(
+    stalePath(theirs, all),
+    null,
+    'differing from what setup would write today is not a reason to rewrite it',
+  );
 });

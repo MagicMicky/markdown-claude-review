@@ -14,14 +14,14 @@ Everything is local files.
 
 1. Claude Code writes `docs/strategy.md`.
 2. You open the review preview (`Ctrl+K V`), select a passage, and comment on it.
-3. You type `/review` in Claude Code. Or just say "address my comments on the strategy doc".
+3. You type `/markdown-review` in Claude Code. Or just say "address my comments on the strategy doc".
 4. Claude calls `list_threads`, edits the doc, then `resolve_thread` (done) or
    `reply_thread` (needs your input). Its replies appear in the bubble.
 5. Threads you have not resolved stay open. Nothing is ever silently dropped.
 
 There is no hand-off file and nothing to paste. The threads live behind an MCP server,
-so asking Claude for them in plain English is the whole interface; `/review` is a
-shortcut, not a requirement.
+so asking Claude for them in plain English is the whole interface; `/markdown-review`
+is a shortcut, not a requirement.
 
 ## Install
 
@@ -51,12 +51,27 @@ code --install-extension markdown-claude-review.vsix
 Then, in the workspace where you write documents:
 
 - Run **Markdown Review: Set Up Claude Code Integration** from the command palette. It
-  writes `.mcp.json` and a `/review` slash command into `.claude/commands/`.
+  writes `.mcp.json` and a `/markdown-review` slash command into `.claude/commands/`.
 - Restart Claude Code in that workspace and approve the `markdown-review` server.
 
-The generated `.mcp.json` points at VS Code's bundled Node and the installed extension
-by absolute path, so it is machine-specific — if you commit it, everyone else re-runs
-the setup command on their own machine.
+The command is `/markdown-review`, not `/review`. Claude Code has a built-in `/review`,
+and a workspace that has not run setup does not get an unknown-command error from
+`/review` — it silently gets a code review instead, which looks enough like the hand-off
+working to be missed. **If you set this up before v0.1.2, re-run the setup command**: it
+writes the new name and deletes the `review.md` the old version left shadowing Claude
+Code's own. An explicit `mdreview.sendPrompt` in your settings is yours, so it is left
+alone; update it by hand if it still says `/review`.
+
+The generated `.mcp.json` points at VS Code's bundled Node by absolute path, so it is
+machine-specific — if you commit it, everyone else re-runs the setup command on their own
+machine.
+
+That path rots on its own: VS Code's bundled Node moves when VS Code updates. The
+extension re-checks the entry every time it starts and rewrites it when it has stopped
+pointing at anything, then tells you to restart Claude Code — so a hand-off that silently
+stopped working is not something you have to notice yourself. The server it launches is a
+copy kept outside the versioned install directory, so extension updates do not move it at
+all.
 
 The extension is disabled in [Restricted Mode](https://code.visualstudio.com/docs/editor/workspace-trust):
 it reads comment threads from files in the workspace, and the hand-off types a
@@ -84,13 +99,13 @@ Both are projections of the same state. A reply typed in either appears in the o
 | Jump to the source | Alt+click a passage in the preview |
 | Jump between comments | **Next / Previous Comment** from the palette |
 | Re-attach a stale comment | Select the new passage, then **Re-attach to selection** on the bubble |
-| Hand off to Claude | Type `/review` in Claude Code, or the **send** button in the preview's title bar |
+| Hand off to Claude | Type `/markdown-review` in Claude Code, or the **send** button in the preview's title bar |
 | Read the closed history | The **eye** button in the preview's title bar, or the thread in the source editor |
 | Force a re-scan | **Markdown Review: Refresh Threads**, if state ever looks stale |
 
 The send button sits in the preview's title bar, but the review it triggers is
-workspace-wide: it types `/review` once, and Claude picks up every open comment in every
-document, not only the one you were looking at.
+workspace-wide: it types `/markdown-review` once, and Claude picks up every open comment
+in every document, not only the one you were looking at.
 
 Beside it, the eye button lists resolved threads in the preview too. They come back
 greyed, tinted green in the prose, and offering **Reopen** where a live thread offers
@@ -218,7 +233,7 @@ inside the markdown.
 ## What Claude is told to do
 
 The goal, stated once in `src/core/guidance.ts` and rendered into the MCP instructions,
-the `list_threads` result and the `/review` command so the three cannot drift:
+the `list_threads` result and the `/markdown-review` command so the three cannot drift:
 
 > Make the document correct and useful on its own terms. A reader who never saw the
 > review should not be able to tell that one happened.
@@ -284,7 +299,7 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 | `mdreview.reviewDir` | `.review` | Where threads are stored |
 | `mdreview.author` | git `user.name` | Name on your comments |
 | `mdreview.terminalName` | `claude` | Substring matching your Claude Code terminal |
-| `mdreview.sendPrompt` | `/review` | What the Send Review command types for you |
+| `mdreview.sendPrompt` | `/markdown-review` | What the Send Review command types for you |
 
 The last four are machine-scoped on purpose: `sendPrompt` and `terminalName` decide what
 gets typed into a terminal, so a cloned repository must not be able to set them.

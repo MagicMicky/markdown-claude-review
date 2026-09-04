@@ -68,7 +68,7 @@ last spoke if the text comes back.
 
 **One source for the prompts.** `src/core/guidance.ts` renders into all three places
 Claude reads instructions — the MCP connect-time `instructions`, the `list_threads`
-result, and the generated `/review` slash command. Change the arrays there, never the
+result, and the generated `/markdown-review` slash command. Change the arrays there, never the
 call sites; a test asserts every rule reaches the prose form.
 
 **Writes are atomic.** `writeReview` goes through a temp file and a rename, because the
@@ -107,7 +107,21 @@ the CSP in `src/extension/preview.ts`: `script-src` is nonce-only, so neither a
 
 **Config merges never clobber.** `mergeMcpConfig` refuses to write when an existing
 `.mcp.json` does not parse, rather than replacing a file that may hold other servers.
-Same for `/review`: a command without our marker prompts before being overwritten.
+Same for `/markdown-review`: a command without our marker prompts before being
+overwritten. The name is not `review` on purpose — that is a Claude Code built-in, so
+the old name made a workspace that never ran setup get a code review out of the hand-off
+instead of an error. `COMMAND_NAME` and `LEGACY_COMMAND_NAME` in `src/core/setup.ts` are
+the only place either name is written, and setup deletes the legacy file when it still
+carries our marker.
+
+**Nothing durable points at a versioned path.** Both paths a registration needs rot:
+VS Code's bundled node lives under a directory named after its build, and an extension's
+install directory is named after its version. So the server is launched from
+`globalStorageUri`, which is keyed on the extension id alone, and `syncStableServer`
+copies `dist/mcp.js` there on activation. `healMcpConfig` re-checks the stored entry
+every activation and rewrites it when a path has genuinely gone — not when it merely
+differs from what setup would write today, or a hand-repointed interpreter would be
+stomped. It repairs, never registers: a workspace with no entry is one nobody enabled.
 
 **A review file is never overwritten from a bad read.** `loadReview` distinguishes
 absent from unreadable, and both `Session` and the MCP server refuse to write over the
