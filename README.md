@@ -99,13 +99,15 @@ Both are projections of the same state. A reply typed in either appears in the o
 | Jump to the source | Alt+click a passage in the preview |
 | Jump between comments | **Next / Previous Comment** from the palette |
 | Re-attach a stale comment | Select the new passage, then **Re-attach to selection** on the bubble |
-| Hand off to Claude | Type `/markdown-review` in Claude Code, or the **send** button in the preview's title bar |
+| Hand off to Claude | The **send** button in the preview's title bar, or type `/markdown-review` in Claude Code |
 | Read the closed history | The **eye** button in the preview's title bar, or the thread in the source editor |
 | Force a re-scan | **Markdown Review: Refresh Threads**, if state ever looks stale |
 
-The send button sits in the preview's title bar, but the review it triggers is
-workspace-wide: it types `/markdown-review` once, and Claude picks up every open comment
-in every document, not only the one you were looking at.
+The send button types the document you are looking at along with the prompt —
+`/markdown-review docs/strategy.md` — so the review it triggers is that document's, not
+the workspace's. Run it from the command palette with no preview or markdown editor
+focused and it asks which document to send, offering the whole workspace as one of the
+choices.
 
 Beside it, the eye button lists resolved threads in the preview too. They come back
 greyed, tinted green in the prose, and offering **Reopen** where a live thread offers
@@ -218,7 +220,7 @@ an unreadable file as an empty one would destroy it.
 
 | Tool | Purpose |
 | --- | --- |
-| `list_threads` | Comments needing attention (default), or filtered by document/status |
+| `list_threads` | Comments on one document, or on the whole workspace when asked for; with neither, the documents that have comments, to choose from |
 | `get_thread` | One thread with its full history |
 | `reply_thread` | Ask a clarifying question or push back; leaves the thread open |
 | `resolve_thread` | Close a thread after editing, with a note on what changed |
@@ -229,6 +231,39 @@ The server also ships connect-time instructions telling Claude to reach for
 `list_threads` whenever you mention comments or feedback on a document — so plain
 English works without the slash command, and Claude will not go hunting for comments
 inside the markdown.
+
+## Which document a review is about
+
+A review is scoped to what you asked about, and `list_threads` makes Claude say which
+that is. Three answers, none of them a fallback for the others:
+
+| | |
+| --- | --- |
+| `document: "docs/strategy.md"` | That document's threads. The usual case, and the one the send button and a session already working on a document both produce. |
+| `all_documents: true` | Every document in the workspace. A scope you ask for — "go through all my comments" — rather than one you arrive at. |
+| neither | The documents that have comments: their paths, their counts, and the headings the comments sit under. No threads. |
+
+The third is what makes the other two honest. Left to mean "everything", an omitted
+argument turns *"address my comments"* in a fresh session into a sweep of every
+unfinished document you own; answered with the list instead, Claude either recognises
+the document from the conversation, or shows you the list and asks. Two documents open
+in two parallel sessions stay separate, because neither session can reach the other's
+comments without you or the conversation naming that document.
+
+Recognition is deliberately left to Claude, which has the conversation, rather than
+done here from the files, which cannot see it. The candidate list carries no "most
+recent" marker and is ordered by path: ranking it would invite picking the top entry
+instead of the right one. The section headings are there so *"the new firewall policy"*
+has something to match against.
+
+A `document` that matches nothing comes back with the same list rather than a bare miss,
+so a near-miss on a path costs one round trip — and the cheapest way out of a dead end
+is never to widen the scope to everything.
+
+The list is cheap enough not to think about: around 380 tokens for two documents, most of
+that the fixed guidance on how to choose, and roughly 50 per document after. So the
+round trip it costs when Claude could not tell which document you meant is worth far
+less than the prose it saves when it guesses wrong.
 
 ## What Claude is told to do
 
@@ -266,6 +301,7 @@ by document and adapts:
 
 | Document | What comes back | Instruction |
 | --- | --- | --- |
+| Scope not stated | Paths, counts and section headings. No threads, no prose | Pick the document, or ask which |
 | ≤ 400 lines | Threads only | Read the whole file once, before your first edit to it |
 | > 400 lines | Threads, plus the heading `outline` and the `section_context` around each commented passage | Read further only where the change touches something stated elsewhere |
 

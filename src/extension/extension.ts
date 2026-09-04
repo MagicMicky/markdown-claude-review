@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { EDITING_CONTRACT } from '../core/guidance.js';
+import { EDITING_CONTRACT, SCOPE_CONTRACT } from '../core/guidance.js';
+import { matchesStatus } from '../core/scope.js';
 import {
   COMMAND_MARKER,
   COMMAND_NAME,
@@ -28,7 +29,7 @@ const SUBMIT_DELAY_MS = 80;
  */
 const REVIEW_COMMAND = `---
 description: Address the review comments left on markdown documents in this workspace
-argument-hint: [optional path to one document]
+argument-hint: [document to review — a path, a description, or nothing]
 ---
 ${COMMAND_MARKER}
 
@@ -38,19 +39,30 @@ Scope, if given: $ARGUMENTS
 
 ## Process
 
-1. Call \`list_threads\` from the \`markdown-review\` MCP server to fetch the comments
-   waiting on you. If a document path is given above, pass it as \`document\`. The
-   comments are not written in the markdown itself — the tool is the only source.
-2. The result groups threads by document and includes, per document, its \`outline\`,
-   its size, and the \`section_context\` around each commented passage. Read a whole
-   document only when its \`size_hint\` says it is short, when your change touches
-   something stated elsewhere in it, or when it is not already in your context —
-   once per document, before you edit it, not once per thread.
-3. Work through the threads one at a time. For each, either edit the document and
+1. Work out what you are reviewing before you call anything. The scope above is free
+   text — a path, a description of a document, "all of them", or empty. If it names a
+   path, or if this session has already been working on one document, that is your
+   scope. If it describes a document without naming one, you still need its path, and
+   the unscoped call in step 2 is how you get it.
+2. Call \`list_threads\` from the \`markdown-review\` MCP server. Pass \`document\` when
+   you have a path, \`all_documents: true\` when I asked for the whole workspace, and
+   neither when nothing has settled it — that returns the documents with comments, to
+   match against or to ask me about. The comments are not written in the markdown
+   itself; the tool is the only source.
+3. The result includes, per document, its \`outline\`, its size, and the
+   \`section_context\` around each commented passage. Read a whole document only when
+   its \`size_hint\` says it is short, when your change touches something stated
+   elsewhere in it, or when it is not already in your context — once per document,
+   before you edit it, not once per thread.
+4. Work through the threads one at a time. For each, either edit the document and
    \`resolve_thread\`, or \`reply_thread\` and leave it open. Never resolve a thread you
    did not actually address.
-4. Never edit files under \`.review/\` by hand. Use the tools.
-5. Finish by summarising what you changed, and what you left open and why.
+5. Never edit files under \`.review/\` by hand. Use the tools.
+6. Finish by summarising what you changed, and what you left open and why.
+
+## Which document
+
+${SCOPE_CONTRACT}
 
 ## How to edit
 
@@ -90,6 +102,50 @@ async function syncStableServer(context: vscode.ExtensionContext): Promise<vscod
   await vscode.workspace.fs.createDirectory(context.globalStorageUri);
   await vscode.workspace.fs.copy(src, dest, { overwrite: true });
   return dest;
+}
+
+/** The trigger phrase. The scope — a document path, or "all documents" — is appended. */
+function sendPrompt(): string {
+  return vscode.workspace.getConfiguration('mdreview').get('sendPrompt', `/${COMMAND_NAME}`);
+}
+
+/**
+ * Type the hand-off into the Claude Code terminal, or fall back to the clipboard.
+ *
+ * `what` is only for the confirmation toast, and it names the scope: the count
+ * on its own used to be the workspace total, which said nothing true about what
+ * had just been sent.
+ */
+async function handOff(line: string, what: string): Promise<void> {
+  const needle = vscode.workspace
+    .getConfiguration('mdreview')
+    .get('terminalName', 'claude')
+    .toLowerCase();
+  // `includes('')` is true for every terminal, so an empty setting would type
+  // the prompt into whichever shell happened to be first.
+  const terminal = needle
+    ? vscode.window.terminals.find((t) => t.name.toLowerCase().includes(needle))
+    : undefined;
+
+  if (!terminal) {
+    await vscode.env.clipboard.writeText(line);
+    vscode.window.showWarningMessage(
+      `No terminal matching "${needle}" found. Copied "${line}" to your clipboard — or just ask Claude to address your review comments.`,
+    );
+    return;
+  }
+
+  terminal.show(true);
+  // One line, not the whole digest: pasting multi-line text into a TUI is fragile.
+  //
+  // sendText(_, true) appends \n, which Claude Code's input treats as
+  // "insert a newline" (shift+enter) rather than submit. The Enter key
+  // actually sends a carriage return, so send the text and the CR
+  // separately, with a beat in between for the TUI to settle the paste.
+  terminal.sendText(line, false);
+  await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
+  terminal.sendText('\r', false);
+  vscode.window.showInformationMessage(`Sent ${what} to ${terminal.name}.`);
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -398,50 +454,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   register('mdreview.sendToClaude', async () => {
     await session.refreshAll();
-    const openCount = session
-      .all()
-      .reduce(
-        (n, d) => n + d.file.threads.filter((t) => t.status === 'open' || t.status === 'stale').length,
-        0,
+    const needsAttention = (docRelPath: string) =>
+      session.get(docRelPath)?.file.threads.filter((t) => matchesStatus(t, 'needs_attention'))
+        .length ?? 0;
+
+    // Which document the hand-off is about, decided here rather than left to
+    // Claude: the editor knows, and a prompt that names the document costs one
+    // round trip less than one that makes Claude ask which. Nothing is inferred
+    // from the review files themselves — if focus does not say, the user does.
+    const active = previews.active()?.docRelPath;
+    const editor = vscode.window.activeTextEditor;
+    const fromEditor =
+      editor?.document.languageId === 'markdown'
+        ? session.docRelPath(editor.document.uri)
+        : undefined;
+
+    let scope = active ?? fromEditor;
+    if (scope === undefined) {
+      const withComments = session.all().filter((d) => needsAttention(d.docRelPath) > 0);
+      if (withComments.length === 0) {
+        vscode.window.showInformationMessage('No open comments to send.');
+        return;
+      }
+      const ALL = 'All documents in the workspace';
+      const picked = await vscode.window.showQuickPick(
+        [
+          ...withComments.map((d) => ({
+            label: d.docRelPath,
+            description: `${needsAttention(d.docRelPath)} open`,
+          })),
+          { label: ALL, description: `${withComments.length} documents` },
+        ],
+        { title: 'Send which review to Claude Code?', placeHolder: 'Pick a document' },
       );
+      if (!picked) return;
+      scope = picked.label === ALL ? undefined : picked.label;
+      if (scope === undefined) {
+        await handOff(`${sendPrompt()} all documents in the workspace`, 'every document');
+        return;
+      }
+    }
+
+    const openCount = needsAttention(scope);
     if (openCount === 0) {
-      vscode.window.showInformationMessage('No open comments to send.');
+      vscode.window.showInformationMessage(`No open comments on ${scope} to send.`);
       return;
     }
-
-    const needle = vscode.workspace
-      .getConfiguration('mdreview')
-      .get('terminalName', 'claude')
-      .toLowerCase();
-    // `includes('')` is true for every terminal, so an empty setting would type
-    // the prompt into whichever shell happened to be first.
-    const terminal = needle
-      ? vscode.window.terminals.find((t) => t.name.toLowerCase().includes(needle))
-      : undefined;
-    // Nothing more than what you would type yourself. Claude reads the comments
-    // through the MCP server, so there is no digest to hand over.
-    const line = vscode.workspace
-      .getConfiguration('mdreview')
-      .get('sendPrompt', `/${COMMAND_NAME}`);
-
-    if (terminal) {
-      terminal.show(true);
-      // One line, not the whole digest: pasting multi-line text into a TUI is fragile.
-      //
-      // sendText(_, true) appends \n, which Claude Code's input treats as
-      // "insert a newline" (shift+enter) rather than submit. The Enter key
-      // actually sends a carriage return, so send the text and the CR
-      // separately, with a beat in between for the TUI to settle the paste.
-      terminal.sendText(line, false);
-      await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
-      terminal.sendText('\r', false);
-      vscode.window.showInformationMessage(`Sent ${openCount} comment(s) to ${terminal.name}.`);
-    } else {
-      await vscode.env.clipboard.writeText(line);
-      vscode.window.showWarningMessage(
-        `No terminal matching "${needle}" found. Copied "${line}" to your clipboard — or just ask Claude to address your review comments.`,
-      );
-    }
+    await handOff(`${sendPrompt()} ${scope}`, `${openCount} comment(s) on ${scope}`);
   });
 
   register('mdreview.setupClaude', async () => {
