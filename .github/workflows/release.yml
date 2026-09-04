@@ -39,6 +39,7 @@ on:
       - '.vscode/**'
       - '.gitignore'
       - '.vscodeignore'
+      - 'scripts/**'
 
 permissions:
   contents: write
