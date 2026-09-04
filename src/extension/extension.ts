@@ -4,7 +4,7 @@ import { EDITING_CONTRACT } from '../core/guidance.js';
 import { COMMAND_MARKER, isOurCommand, mergeMcpConfig } from '../core/setup.js';
 import { ReviewActions } from './actions.js';
 import { CommentUI } from './comments.js';
-import { inlineMode } from './config.js';
+import { inlineMode, showResolvedInPreview } from './config.js';
 import { Decorations } from './decorations.js';
 import { FocusTracker } from './focus.js';
 import { PreviewManager } from './preview.js';
@@ -106,9 +106,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.commands.executeCommand('setContext', 'mdreview.replacesPreview', owns);
   };
 
+  /**
+   * The title-bar toggle is two commands sharing a slot, so the button shows the
+   * action rather than the state. `mdreview.resolvedVisible` mirrors the setting
+   * into a context key because a `when` clause cannot read configuration.
+   */
+  const applyResolvedVisibility = () => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'mdreview.resolvedVisible',
+      showResolvedInPreview(),
+    );
+  };
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('mdreview.replaceBuiltInPreview')) applyPreviewOwnership();
+      if (e.affectsConfiguration('mdreview.showResolvedInPreview')) applyResolvedVisibility();
     }),
     // Leave VS Code's preview alone once we are gone.
     { dispose: () => void vscode.commands.executeCommand('setContext', 'hasCustomMarkdownPreview', false) },
@@ -117,6 +131,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await session.init();
   applyInlineMode();
   applyPreviewOwnership();
+  applyResolvedVisibility();
 
   /** Thread id from a webview/tree string, or from an inline thread's title bar. */
   const idFrom = (arg: unknown): string | undefined => {
@@ -244,6 +259,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   register('mdreview.nextThread', () => step(1));
   register('mdreview.previousThread', () => step(-1));
+
+  // Global, not Workspace: this is a per-person view preference, and this repo —
+  // like many — tracks .vscode/, so writing it there would put a toggle of the
+  // reading pane into everyone's `git status`. A workspace value set by hand is
+  // still honoured; only the button's own writes are kept out of the tree.
+  const setResolvedVisible = async (visible: boolean) => {
+    await vscode.workspace
+      .getConfiguration('mdreview')
+      .update('showResolvedInPreview', visible, vscode.ConfigurationTarget.Global);
+  };
+
+  register('mdreview.showResolved', () => setResolvedVisible(true));
+  register('mdreview.hideResolved', () => setResolvedVisible(false));
 
   register('mdreview.toggleInlineThreads', async () => {
     const order = ['collapsed', 'expanded', 'off'] as const;

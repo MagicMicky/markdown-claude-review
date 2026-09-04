@@ -120,6 +120,18 @@
         "icon": "$(send)"
       },
       {
+        "command": "mdreview.showResolved",
+        "title": "Show Resolved Comments in Preview",
+        "category": "Markdown Review",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "mdreview.hideResolved",
+        "title": "Hide Resolved Comments in Preview",
+        "category": "Markdown Review",
+        "icon": "$(eye-closed)"
+      },
+      {
         "command": "mdreview.setupClaude",
         "title": "Set Up Claude Code Integration",
         "category": "Markdown Review"
@@ -180,6 +192,14 @@
         {
           "command": "mdreview.openPreviewToSide",
           "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdreview.showResolved",
+          "when": "!mdreview.resolvedVisible"
+        },
+        {
+          "command": "mdreview.hideResolved",
+          "when": "mdreview.resolvedVisible"
         }
       ],
       "comments/commentThread/context": [
@@ -223,6 +243,21 @@
           "command": "mdreview.openPreviewToSide",
           "group": "navigation",
           "when": "editorLangId == markdown && mdreview.replacesPreview"
+        },
+        {
+          "command": "mdreview.sendToClaude",
+          "group": "navigation@2",
+          "when": "activeWebviewPanelId == mdreview.preview"
+        },
+        {
+          "command": "mdreview.showResolved",
+          "group": "navigation@1",
+          "when": "activeWebviewPanelId == mdreview.preview && !mdreview.resolvedVisible"
+        },
+        {
+          "command": "mdreview.hideResolved",
+          "group": "navigation@1",
+          "when": "activeWebviewPanelId == mdreview.preview && mdreview.resolvedVisible"
         }
       ]
     },
@@ -278,6 +313,11 @@
             "No inline threads. The editor shows only an underline and a gutter marker, and the review preview is where you comment."
           ],
           "description": "How comment threads appear in the source editor. The review preview is unaffected."
+        },
+        "mdreview.showResolvedInPreview": {
+          "type": "boolean",
+          "default": false,
+          "description": "List resolved comment threads in the review preview alongside the live ones. Off by default: the preview is the working surface, and resolved threads stay readable in the source editor's inline widget."
         },
         "mdreview.replaceBuiltInPreview": {
           "type": "boolean",

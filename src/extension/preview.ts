@@ -5,7 +5,7 @@ import { buildCards, truncateQuote, type AnchorHit, type CardVM } from '../core/
 import type { HighlightSpec, HostMessage, ViewMessage } from '../core/previewProtocol.js';
 import { makeId, type Anchor } from '../core/types.js';
 import type { ReviewActions } from './actions.js';
-import { previewSettings } from './config.js';
+import { previewSettings, showResolvedInPreview } from './config.js';
 import type { FocusTracker } from './focus.js';
 import { render } from './markdown.js';
 import type { Session } from './session.js';
@@ -85,7 +85,12 @@ export class Preview implements vscode.Disposable {
         this.post({ type: 'scrollTo', line: e.visibleRanges[0]?.start.line ?? 0 });
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('markdown') || e.affectsConfiguration('mdreview')) {
+        // Which bubbles are listed, not how the document renders. Going through
+        // pushDocument would bump the generation and repaint the prose, which
+        // for a visibility toggle is a visible flicker and a discarded scroll.
+        if (e.affectsConfiguration('mdreview.showResolvedInPreview')) {
+          this.pushThreads();
+        } else if (e.affectsConfiguration('markdown') || e.affectsConfiguration('mdreview')) {
           void this.pushDocument();
         }
       }),
@@ -176,16 +181,18 @@ export class Preview implements vscode.Disposable {
       const state = this.session.get(this.docRelPath);
       const threads = state?.file.threads ?? [];
       const hits = this.hits(text);
-      // Resolved threads are not shown here. The preview is the live review
-      // surface; the closed history stays in the file and in the inline thread.
-      const cards: CardVM[] = buildCards(
-        threads.filter((t) => t.status !== 'resolved'),
-        hits,
-      );
+      // Resolved threads are hidden here by default. The preview is the live
+      // review surface; the closed history stays in the file and in the inline
+      // thread. `showResolvedInPreview` lets them back in for a read-through —
+      // one list feeds both the bubbles and the highlights, so the margin can
+      // never disagree with what is tinted in the prose.
+      const visible = showResolvedInPreview()
+        ? threads
+        : threads.filter((t) => t.status !== 'resolved');
+      const cards: CardVM[] = buildCards(visible, hits);
 
       const highlights: HighlightSpec[] = [];
-      for (const t of threads) {
-        if (t.status === 'resolved') continue;
+      for (const t of visible) {
         const hit = hits.get(t.id);
         highlights.push({
           threadId: t.id,

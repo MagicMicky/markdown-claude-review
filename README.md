@@ -84,8 +84,19 @@ Both are projections of the same state. A reply typed in either appears in the o
 | Jump to the source | Alt+click a passage in the preview |
 | Jump between comments | **Next / Previous Comment** from the palette |
 | Re-attach a stale comment | Select the new passage, then **Re-attach to selection** on the bubble |
-| Hand off to Claude | Type `/review` in Claude Code |
+| Hand off to Claude | Type `/review` in Claude Code, or the **send** button in the preview's title bar |
+| Read the closed history | The **eye** button in the preview's title bar, or the thread in the source editor |
 | Force a re-scan | **Markdown Review: Refresh Threads**, if state ever looks stale |
+
+The send button sits in the preview's title bar, but the review it triggers is
+workspace-wide: it types `/review` once, and Claude picks up every open comment in every
+document, not only the one you were looking at.
+
+Beside it, the eye button lists resolved threads in the preview too. They come back
+greyed, tinted green in the prose, and offering **Reopen** where a live thread offers
+**Resolve** — it is a read-through of what was already decided, so nothing there can pull
+a closed thread back open by accident. It is off by default because the preview is where
+you work; the source editor's inline thread has always kept the full history regardless.
 
 Three visual layers, deliberately distinct: every open thread tints its passage faintly;
 a bar in the left margin tracks where the source editor's cursor is; and the thread you
@@ -120,8 +131,8 @@ only ever happens on purpose — Claude calling `resolve_thread` after making th
 you clicking **Resolve**.
 
 A resolved thread disappears from the preview, which is the live review surface. It is
-not gone: it stays in the review file and in the source editor's inline thread, where
-you can reopen it.
+not gone: it stays in the review file and in the source editor's inline thread, where you
+can reopen it — and the preview's eye button brings it back into view there too.
 
 Claude only sees **open** and **stale** threads by default, so an *answered* thread is
 not waiting on Claude and a *resolved* one is out of the loop entirely.
@@ -268,6 +279,7 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 | `mdreview.replaceBuiltInPreview` | `true` | Hide VS Code's preview buttons and take `Ctrl+K V` |
 | `mdreview.inlineThreads` | `collapsed` | Editor layer: `collapsed`, `expanded`, `off` |
 | `mdreview.highlightCommentedRanges` | `true` | Underline commented passages in the editor |
+| `mdreview.showResolvedInPreview` | `false` | List closed threads in the preview as well |
 | `mdreview.fuzzyThreshold` | `0.62` | Similarity needed to re-attach to rewritten prose |
 | `mdreview.reviewDir` | `.review` | Where threads are stored |
 | `mdreview.author` | git `user.name` | Name on your comments |

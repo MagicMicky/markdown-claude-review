@@ -13,6 +13,18 @@ export function inlineMode(): InlineMode {
   return raw === 'expanded' || raw === 'off' ? raw : 'collapsed';
 }
 
+/**
+ * Whether the preview lists closed threads alongside the live ones.
+ *
+ * Off by default: the preview is the working surface, and the inline widget is
+ * where the closed history normally lives. Turning it on is a read-through of
+ * what was already decided, so resolved bubbles offer Reopen rather than
+ * Resolve and never re-attach.
+ */
+export function showResolvedInPreview(): boolean {
+  return vscode.workspace.getConfiguration('mdreview').get('showResolvedInPreview', false);
+}
+
 export function previewSettings(resource?: vscode.Uri): PreviewSettings {
   const md = vscode.workspace.getConfiguration('markdown', resource);
   return {

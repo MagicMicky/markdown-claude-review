@@ -45,7 +45,7 @@ export interface CardVM {
   messageCount: number;
   createdAt: string;
   updatedAt: string;
-  /** The anchor is lost, so the bubble offers to re-attach it. */
+  /** The anchor is lost and the thread is still live, so the bubble offers to re-attach it. */
   canReattach: boolean;
   /** Document order. Threads whose anchor is lost sort to the end. */
   sortKey: number;
@@ -109,7 +109,10 @@ export function buildCard(
     messageCount: thread.messages.length,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
-    canReattach: attachment === 'lost',
+    // A resolved thread with no home is finished history, not a loose end.
+    // Offering re-attach there would flip it back out of `resolved`, which is
+    // a status change nobody asked for.
+    canReattach: attachment === 'lost' && thread.status !== 'resolved',
     sortKey: hit ? hit.start : LOST_SORT_KEY,
   };
 }
