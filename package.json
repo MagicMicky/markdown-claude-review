@@ -295,9 +295,9 @@
         "mdreview.sendPrompt": {
           "type": "string",
           "default": "/markdown-review",
-          "description": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger. Avoid names Claude Code already uses, such as /review, or this types something that silently does the wrong thing.",
+          "description": "What the Send Review command types into the Claude Code terminal, before the scope. The document being reviewed is appended to it, so the hand-off names what it sent. Claude reads the comments over MCP, so this is just a trigger. Avoid names Claude Code already uses, such as /review, or this types something that silently does the wrong thing.",
           "scope": "machine",
-          "markdownDescription": "What the Send Review command types into the Claude Code terminal. Claude reads the comments over MCP, so this is just a trigger. Avoid names Claude Code already uses, such as `/review` — an unrecognised command is a visible error, but a colliding one silently does the wrong thing. Machine-scoped: it is typed into a terminal, so a workspace must not be able to set it."
+          "markdownDescription": "What the Send Review command types into the Claude Code terminal, before the scope. The document being reviewed is appended to it — `/markdown-review docs/plan.md` — so the hand-off names what it sent instead of leaving Claude to work it out. Claude reads the comments over MCP, so this is just a trigger. Avoid names Claude Code already uses, such as `/review` — an unrecognised command is a visible error, but a colliding one silently does the wrong thing. Machine-scoped: it is typed into a terminal, so a workspace must not be able to set it."
         },
         "mdreview.inlineThreads": {
           "type": "string",
@@ -353,6 +353,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "test": "node --test dist-test/test/*.test.js dist-test/test/webview/*.test.js",
     "pretest": "node -e \"fs.rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && tsc -p tsconfig.webviewtest.json",
+    "scenarios": "npm run build && node scripts/scenarios.mjs",
     "package": "npm run build && vsce package --no-dependencies -o markdown-claude-review.vsix"
   },
   "dependencies": {

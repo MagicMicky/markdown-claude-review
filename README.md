@@ -14,9 +14,10 @@ Everything is local files.
 
 1. Claude Code writes `docs/strategy.md`.
 2. You open the review preview (`Ctrl+K V`), select a passage, and comment on it.
-3. You type `/markdown-review` in Claude Code. Or just say "address my comments on the strategy doc".
-4. Claude calls `list_threads`, edits the doc, then `resolve_thread` (done) or
-   `reply_thread` (needs your input). Its replies appear in the bubble.
+3. You press the **send** button, which types `/markdown-review docs/strategy.md` into
+   Claude Code. Or just say "address my comments on the strategy doc".
+4. Claude calls `list_threads` for that document, edits it, then `resolve_thread` (done)
+   or `reply_thread` (needs your input). Its replies appear in the bubble.
 5. Threads you have not resolved stay open. Nothing is ever silently dropped.
 
 There is no hand-off file and nothing to paste. The threads live behind an MCP server,
@@ -99,13 +100,15 @@ Both are projections of the same state. A reply typed in either appears in the o
 | Jump to the source | Alt+click a passage in the preview |
 | Jump between comments | **Next / Previous Comment** from the palette |
 | Re-attach a stale comment | Select the new passage, then **Re-attach to selection** on the bubble |
-| Hand off to Claude | Type `/markdown-review` in Claude Code, or the **send** button in the preview's title bar |
+| Hand off to Claude | The **send** button in the preview's title bar, or type `/markdown-review` in Claude Code |
 | Read the closed history | The **eye** button in the preview's title bar, or the thread in the source editor |
 | Force a re-scan | **Markdown Review: Refresh Threads**, if state ever looks stale |
 
-The send button sits in the preview's title bar, but the review it triggers is
-workspace-wide: it types `/markdown-review` once, and Claude picks up every open comment
-in every document, not only the one you were looking at.
+The send button types the document you are looking at along with the prompt —
+`/markdown-review docs/strategy.md` — so the review it triggers is that document's, not
+the workspace's. Run it from the command palette with no preview or markdown editor
+focused and it asks which document to send, offering the whole workspace as one of the
+choices.
 
 Beside it, the eye button lists resolved threads in the preview too. They come back
 greyed, tinted green in the prose, and offering **Reopen** where a live thread offers
@@ -218,17 +221,49 @@ an unreadable file as an empty one would destroy it.
 
 | Tool | Purpose |
 | --- | --- |
-| `list_threads` | Comments needing attention (default), or filtered by document/status |
+| `list_threads` | Comments on one document, or on the whole workspace when asked for; with neither, the documents that have comments, to choose from |
 | `get_thread` | One thread with its full history |
 | `reply_thread` | Ask a clarifying question or push back; leaves the thread open |
 | `resolve_thread` | Close a thread after editing, with a note on what changed |
 | `create_thread` | Flag an unverified claim in its own document and ask you about it |
-| `list_documents` | Which documents have open comments |
 
 The server also ships connect-time instructions telling Claude to reach for
 `list_threads` whenever you mention comments or feedback on a document — so plain
 English works without the slash command, and Claude will not go hunting for comments
 inside the markdown.
+
+## Which document a review is about
+
+A review is scoped to what you asked about, and `list_threads` makes Claude say which
+that is. Three answers, none of them a fallback for the others:
+
+| | |
+| --- | --- |
+| `document: "docs/strategy.md"` | That document's threads. The usual case, and the one the send button and a session already working on a document both produce. |
+| `all_documents: true` | Every document in the workspace. A scope you ask for — "go through all my comments" — rather than one you arrive at. |
+| neither | The documents that have comments: their paths, their counts, and the headings the comments sit under. No threads. |
+
+The third is what makes the other two honest. Left to mean "everything", an omitted
+argument turns *"address my comments"* in a fresh session into a sweep of every
+unfinished document you own; answered with the list instead, Claude either recognises
+the document from the conversation, or shows you the list and asks. Two documents open
+in two parallel sessions stay separate, because neither session can reach the other's
+comments without you or the conversation naming that document.
+
+Recognition is deliberately left to Claude, which has the conversation, rather than
+done here from the files, which cannot see it. The candidate list carries no "most
+recent" marker and is ordered by path: ranking it would invite picking the top entry
+instead of the right one. The section headings are there so *"the new firewall policy"*
+has something to match against.
+
+A `document` that matches nothing comes back with the same list rather than a bare miss,
+so a near-miss on a path costs one round trip — and the cheapest way out of a dead end
+is never to widen the scope to everything.
+
+The list is cheap enough not to think about: around 380 tokens for two documents, most of
+that the fixed guidance on how to choose, and roughly 50 per document after. So the
+round trip it costs when Claude could not tell which document you meant is worth far
+less than the prose it saves when it guesses wrong.
 
 ## What Claude is told to do
 
@@ -266,6 +301,7 @@ by document and adapts:
 
 | Document | What comes back | Instruction |
 | --- | --- | --- |
+| Scope not stated | Paths, counts and section headings. No threads, no prose | Pick the document, or ask which |
 | ≤ 400 lines | Threads only | Read the whole file once, before your first edit to it |
 | > 400 lines | Threads, plus the heading `outline` and the `section_context` around each commented passage | Read further only where the change touches something stated elsewhere |
 
@@ -299,7 +335,7 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 | `mdreview.reviewDir` | `.review` | Where threads are stored |
 | `mdreview.author` | git `user.name` | Name on your comments |
 | `mdreview.terminalName` | `claude` | Substring matching your Claude Code terminal |
-| `mdreview.sendPrompt` | `/markdown-review` | What the Send Review command types for you |
+| `mdreview.sendPrompt` | `/markdown-review` | What Send Review types, before the document path |
 
 The last four are machine-scoped on purpose: `sendPrompt` and `terminalName` decide what
 gets typed into a terminal, so a cloned repository must not be able to set them.
@@ -316,6 +352,7 @@ npm run typecheck  # root project and the webview project
 npm test           # core suite plus the webview's DOM tests
 npm run watch      # rebuild on change
 npm run build      # three bundles: extension, MCP server, preview webview
+npm run scenarios  # local only: drive a real Claude Code session against the tools
 ```
 
 Press `F5` and pick **Run Extension (sandbox)** to launch an Extension Development Host
@@ -327,6 +364,38 @@ because that layer is where the bugs have actually been, and the DOM lib must no
 into `src/core`.
 
 See [CLAUDE.md](CLAUDE.md) for the invariants worth not breaking.
+
+### Scenario trials
+
+`npm run scenarios` tests the one thing a unit test cannot reach: whether Claude,
+reading the tool descriptions and the generated slash command, actually says which
+document it is reviewing. Each scenario builds a throwaway workspace holding two
+unrelated documents with open comments, launches the real MCP server over stdio, and
+drives a real `claude -p` session against it. What it asserts is the calls that were
+made and the files that changed — not the wording of the reply.
+
+| Scenario | Expected call shape |
+| --- | --- |
+| `named-path` — the UI hand-off types a path | `document=…` |
+| `session-context` — two turns, the first about one document | `document=…`, no lookup |
+| `described-document` — "my comments on the firewall policy" | `unscoped → document=…` |
+| `no-context` — "review my comments", cold | `unscoped`, then a question, no edits |
+| `explicit-sweep` — "all my comments, every document" | `all_documents` |
+
+The last one is not decoration. The scope rules exist to stop a sweep nobody asked for,
+not to make a sweep hard to ask for, and that is the check that keeps the difference
+honest.
+
+```sh
+npm run scenarios                        # each scenario once
+npm run scenarios -- --runs 5            # five trials each, for a pass rate
+npm run scenarios -- --only no-context --keep   # keep the workspace and transcript
+```
+
+It uses your own Claude Code login and costs whatever a handful of small sessions costs,
+which is why it is a script rather than part of `npm test`, and why CI never runs it. A
+model is not a deterministic function: read the pass rates as evidence, and a failure as
+a reason to open the transcript, not as a broken build.
 
 ## Releasing
 

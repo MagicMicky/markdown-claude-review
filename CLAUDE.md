@@ -18,9 +18,10 @@ export PATH="$HOME/.nvm/versions/node/v22.19.0/bin:$PATH"
 ```sh
 npm run typecheck   # tsc --noEmit, strict
 npm test            # compiles to dist-test/, runs node:test
-npm run build       # esbuild -> dist/extension.js and dist/mcp.js
+npm run build       # esbuild -> dist/extension.js, dist/mcp.js, dist/preview.js
 npm run watch       # rebuild on change
 npm run package     # build + vsce -> markdown-claude-review.vsix
+npm run scenarios   # local only, spends a Claude subscription. See below.
 ```
 
 Run `typecheck` and `test` before committing. CI runs both on Node 20 and 22.
@@ -36,6 +37,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 | `src/webview/` | The preview's client script, bundled to `dist/preview.js`. |
 | `src/mcp/` | The stdio MCP server Claude Code talks to. |
 | `src/test/` | `node:test` suites, `src/core` only. |
+| `scripts/` | Local-only harnesses. Not typechecked, not shipped, not run by CI. |
 | `media/` | Static webview assets. Shipped as-is; do not add them to `.vscodeignore`. |
 
 **`src/core/` must never import `vscode`.** All three bundles depend on it, and it is
@@ -69,7 +71,23 @@ last spoke if the text comes back.
 **One source for the prompts.** `src/core/guidance.ts` renders into all three places
 Claude reads instructions — the MCP connect-time `instructions`, the `list_threads`
 result, and the generated `/markdown-review` slash command. Change the arrays there, never the
-call sites; a test asserts every rule reaches the prose form.
+call sites; a test asserts every rule reaches the prose form. Two contracts, kept apart:
+`SCOPE_CONTRACT` is which document, `EDITING_CONTRACT` is what to do to it. Folding
+either into the other leaves a call site that renders one silently missing half the rules.
+
+**A review is scoped to what was asked for, and an unscoped call returns candidates
+rather than threads.** One tool answers "which documents have comments", and it is this
+one — a second listing tool existed until a scenario trial reached for it to pick a
+document, which is what any tool named for listing documents will be used for.
+`list_threads` takes `document` for one, `all_documents` for the
+workspace, and answers neither with the documents that have comments — paths, counts and
+the headings they sit under (`src/core/scope.ts`). None of the three is discouraged; the
+point is that the scope is stated rather than assumed, because "everything unfinished in
+the workspace" is almost never what "address my comments" meant. Which document is being
+worked on is a fact about the conversation, so the candidate list is ordered by path and
+carries no recency signal: ranking it would invite picking the top entry over the right
+one. The same list comes back on a `document` that matches nothing, so recovering from a
+bad path never costs less than staying scoped.
 
 **Writes are atomic.** `writeReview` goes through a temp file and a rename, because the
 extension and the MCP server write the same JSON from different processes.
@@ -105,6 +123,13 @@ the CSP in `src/extension/preview.ts`: `script-src` is nonce-only, so neither a
 `<script>` tag nor an inline `onerror=` in the document can execute, and
 `default-src 'none'` blocks frames and outbound requests.
 
+**The hand-off names its scope.** The send button reads the focused preview (or markdown
+editor) and types the document path after the prompt, so the UI answers "which document"
+with something it actually knows rather than leaving Claude to work it out. Reached from
+the palette with nothing focused, it asks rather than falling back to the workspace. The
+toast counts that document's threads: it used to report the workspace total, which said
+nothing true about what had just been sent.
+
 **Config merges never clobber.** `mergeMcpConfig` refuses to write when an existing
 `.mcp.json` does not parse, rather than replacing a file that may hold other servers.
 Same for `/markdown-review`: a command without our marker prompts before being
@@ -134,10 +159,22 @@ meant to be read in full, and sending both bills the same prose twice.
 
 ## Testing the MCP server
 
-There is no test harness for it. Drive it over real stdio with a small script: spawn
+There is no unit harness for it. Drive it over real stdio with a small script: spawn
 `dist/mcp.js` with `MDREVIEW_ROOT` pointing at a scratch directory, send `initialize`,
 then `notifications/initialized`, then `tools/call` frames as newline-delimited JSON-RPC.
 Worth doing for any change to tool shapes or the guidance payload.
+
+For anything that changes what Claude is *told*, that is not enough — the payload can be
+correct and the behaviour still wrong. `npm run scenarios` (`scripts/scenarios.mjs`)
+drives a real `claude -p` session against a throwaway workspace and asserts on the calls
+made and the files changed: which `document` reached `list_threads` first, whether the
+other document stayed untouched, whether an explicit sweep still sweeps. Local only —
+it spends a Claude subscription, so it is a script, not part of `npm test`, and CI never
+runs it. Add a scenario when you change the scope rules or the slash command; a pass
+rate below 100% is a prompt to read the transcript, not a broken build.
+
+The prompts it exercises come from source, bundled at run time — never from `dist-test/`,
+or a trial can pass against a stale compile of the thing it is testing.
 
 ## Conventions
 

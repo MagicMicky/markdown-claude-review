@@ -215,6 +215,10 @@ export class Preview implements vscode.Disposable {
     this.panel.reveal(column, true);
   }
 
+  get isActive(): boolean {
+    return this.panel.active;
+  }
+
   focusThread(threadId: string): void {
     this.post({ type: 'active', threadId, origin: 'command' });
   }
@@ -562,6 +566,12 @@ export class PreviewManager implements vscode.Disposable {
   /** The preview for a document, if one is open. */
   get(docRelPath: string): Preview | undefined {
     return this.open.get(docRelPath);
+  }
+
+  /** The focused preview, if one is. Which document a hand-off is about. */
+  active(): Preview | undefined {
+    for (const p of this.open.values()) if (p.isActive) return p;
+    return undefined;
   }
 
   dispose(): void {

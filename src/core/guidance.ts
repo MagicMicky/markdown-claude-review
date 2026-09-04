@@ -1,5 +1,6 @@
 /**
- * What Claude is being asked to do when it acts on a review.
+ * What Claude is being asked to do when it acts on a review, and which document
+ * it is being asked to do it to.
  *
  * Stated once here and rendered into all three places it is needed — the MCP
  * server's connect-time instructions, the `list_threads` tool result, and the
@@ -9,6 +10,22 @@
  * the same rules should hold for a compliance policy, a team strategy, or a set
  * of quarterly goals.
  */
+
+/**
+ * Which document a review is about.
+ *
+ * Three ways to answer that, none of them preferred on principle: the point is
+ * that the scope is stated rather than assumed. The single-document case leads
+ * because it is the common one, not because the workspace-wide case is
+ * discouraged — a sweep is a fine thing to ask for, and this says how to ask.
+ */
+export const CHOOSING_THE_DOCUMENT = [
+  'A document the user named, or one this session has already been reading or editing: pass it as `document` on the first call. That is the usual case, and it returns the threads straight away.',
+  'Every document in the workspace — "all my comments", a pass over everything before publishing: pass `all_documents: true`. A scope like any other; it just has to be the one that was actually asked for.',
+  'Nothing has settled it yet: call with neither and you get back the documents that have comments. Recognise the one the user means, or show them the list and ask which.',
+  'A description is not a path. "The new firewall policy" is specific enough to act on, but turning it into a path is what the unscoped call is for — pass the path it lists, not the words the user used.',
+  'Review the scope you were given. Comments on other documents are a separate request, not the remainder of this one.',
+];
 
 export const REVIEW_GOAL =
   'Make the document correct and useful on its own terms. A reader who never saw the review should not be able to tell that one happened.';
@@ -68,6 +85,11 @@ export const HOW_TO_APPLY = {
 };
 
 const bullets = (xs: readonly string[]): string => xs.map((x) => `- ${x}`).join('\n');
+
+/** Prose form of the scope rules, for the MCP instructions and the slash command. */
+export const SCOPE_CONTRACT = `**Say what you are reviewing.** A review is about a document, or about the whole workspace; either way the scope comes from the request, not from a guess about which document is in play.
+
+${bullets(CHOOSING_THE_DOCUMENT)}`;
 
 /** Prose form, for the MCP instructions and the slash command. */
 export const EDITING_CONTRACT = `**Goal.** ${REVIEW_GOAL}

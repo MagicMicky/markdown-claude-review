@@ -26,7 +26,14 @@ import {
   sectionText,
   sizeHint,
 } from '../core/context.js';
-import { EDITING_CONTRACT, HOW_TO_APPLY, HOW_TO_APPLY_REMINDER } from '../core/guidance.js';
+import {
+  CHOOSING_THE_DOCUMENT,
+  EDITING_CONTRACT,
+  HOW_TO_APPLY,
+  HOW_TO_APPLY_REMINDER,
+  SCOPE_CONTRACT,
+} from '../core/guidance.js';
+import { candidateDocuments, matchesStatus, type StatusFilter } from '../core/scope.js';
 import type { ReviewFile, Thread } from '../core/types.js';
 
 const ROOT = process.env.MDREVIEW_ROOT ?? process.cwd();
@@ -134,6 +141,13 @@ function err(message: string) {
   return { content: [{ type: 'text' as const, text: message }], isError: true };
 }
 
+function errPayload(payload: unknown) {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+    isError: true,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 
 /**
@@ -146,6 +160,8 @@ When the user asks you to look at, address, or answer their comments, review not
 feedback on a document, call list_threads first — do not go looking for comments in the
 markdown itself, they are not stored there.
 
+${SCOPE_CONTRACT}
+
 ${EDITING_CONTRACT}`;
 
 /** Whether this process has already sent the full editing contract. */
@@ -156,18 +172,45 @@ const server = new McpServer(
   { instructions: INSTRUCTIONS },
 );
 
+/**
+ * The documents a request could be about, for when the request did not say.
+ *
+ * Paths, counts and the headings the comments sit under — a few hundred tokens
+ * whether the workspace holds two documents or forty. Enough to recognise the
+ * document the user means, or to show them and ask; not enough to start editing
+ * from, which is the point. Choosing is the caller's job: it has the
+ * conversation, and this process has only the files.
+ */
+function candidatesFor(docs: LoadedDoc[], status: StatusFilter) {
+  // docRelPath, not file.document: the path in the file is whatever was written
+  // there, and a candidate you cannot then pass back as `document` is useless.
+  return candidateDocuments(
+    docs.map((d) => ({ document: d.docRelPath, threads: d.file.threads })),
+    status,
+  );
+}
+
+const NOTHING_TO_DO = { count: 0, documents: [], note: 'No comments match. Nothing to address.' };
 
 server.registerTool(
   'list_threads',
   {
     title: 'List review comments',
     description:
-      "List the human reviewer's comment threads on markdown documents. Call this first when asked to address review comments. Defaults to threads that need your attention (open and stale).",
+      "List the human reviewer's comment threads on markdown documents. Call this first when asked to address review comments. Say what you are reviewing: pass `document` when the request or this session identifies one — usually the case — or `all_documents` when the whole workspace was asked for. With neither, you get back the documents that have comments, to recognise one from or to put to the user.",
     inputSchema: {
       document: z
         .string()
         .optional()
-        .describe('Workspace-relative path of one document, e.g. "docs/compliance.md".'),
+        .describe(
+          'Workspace-relative path of the one document being reviewed, e.g. "docs/compliance.md". Pass it whenever the user named a document or this session has been working on one — it returns that document\'s threads directly, with no extra round trip. Must be an exact path; if you only have a description, call with nothing and match it against the documents listed back.',
+        ),
+      all_documents: z
+        .boolean()
+        .optional()
+        .describe(
+          'Review every document in the workspace at once. Pass it when that is what was asked for — "all my comments", a pass over everything before publishing. Reviews are usually about one document, so this is a scope you choose, not one you arrive at by leaving `document` out.',
+        ),
       status: z
         .enum(['open', 'answered', 'resolved', 'stale', 'needs_attention', 'all'])
         .optional()
@@ -176,20 +219,51 @@ server.registerTool(
         ),
     },
   },
-  async ({ document, status = 'needs_attention' }) => {
-    const docs = (await loadAll()).filter((d) => !document || d.docRelPath === document);
-    if (document && docs.length === 0) return err(`No review file for "${document}".`);
-    const wanted = (t: Thread) =>
-      status === 'all'
-        ? true
-        : status === 'needs_attention'
-          ? t.status === 'open' || t.status === 'stale'
-          : t.status === status;
+  async ({ document, all_documents, status = 'needs_attention' }) => {
+    if (document && all_documents) {
+      return err(
+        'Pass either `document` or `all_documents: true`, not both. One document, or the whole workspace.',
+      );
+    }
+
+    const loaded = await loadAll();
+
+    // No scope stated. Answering with every document's threads would pick one
+    // for the user; answering with the list lets the conversation pick it.
+    if (!document && !all_documents) {
+      const candidates = candidatesFor(loaded, status);
+      if (candidates.length === 0) return ok(NOTHING_TO_DO);
+      return ok({
+        scope: 'not set',
+        note:
+          candidates.length === 1
+            ? 'One document has comments. Call again with `document` set to its path if that is the one meant; if it is not what the user is working on, say so rather than reviewing it.'
+            : 'Several documents have comments. Call again with `document` set to the one the user means, or show them this list and ask which.',
+        documents: candidates,
+        how_to_choose: CHOOSING_THE_DOCUMENT,
+      });
+    }
+
+    const docs = document ? loaded.filter((d) => d.docRelPath === document) : loaded;
+    if (document && docs.length === 0) {
+      const candidates = candidatesFor(loaded, status);
+      if (candidates.length === 0) {
+        return err(`No review file for "${document}", and nothing else in this workspace has comments matching "${status}".`);
+      }
+      // The candidates rather than a bare miss: a near-miss on a path is the
+      // common way to get here, and the cheapest recovery from a dead end
+      // should not be widening the scope to everything.
+      return errPayload({
+        error: `No review file for "${document}". It has no comments, or that is not its path.`,
+        documents: candidates,
+        how_to_choose: CHOOSING_THE_DOCUMENT,
+      });
+    }
 
     let count = 0;
     const documents: unknown[] = [];
     for (const d of docs) {
-      const matching = d.file.threads.filter(wanted);
+      const matching = d.file.threads.filter((t) => matchesStatus(t, status));
       if (matching.length === 0) continue;
       count += matching.length;
 
@@ -236,15 +310,18 @@ server.registerTool(
       });
     }
 
-    if (count === 0) {
-      return ok({ count: 0, documents: [], note: 'No comments match. Nothing to address.' });
-    }
+    if (count === 0) return ok(NOTHING_TO_DO);
     // Instructions given once at connect time are easy to lose in a long
     // session, so they ride along here too — in full the first time, and as the
     // rule most often broken thereafter, rather than a page on every call.
     const guidance = servedGuidance ? HOW_TO_APPLY_REMINDER : HOW_TO_APPLY;
     servedGuidance = true;
-    return ok({ count, documents, how_to_apply: guidance });
+    return ok({
+      scope: document ?? 'all documents in the workspace',
+      count,
+      documents,
+      how_to_apply: guidance,
+    });
   },
 );
 
@@ -358,29 +435,6 @@ server.registerTool(
     const failed = await persist({ docRelPath: document, file: loaded.file, reviewPath });
     if (failed) return err(failed);
     return ok({ id: thread.id, status: thread.status, line: lineAt(text, start) });
-  },
-);
-
-server.registerTool(
-  'list_documents',
-  {
-    title: 'List reviewed documents',
-    description: 'Documents that have comment threads, with a count of what needs your attention.',
-    inputSchema: {},
-  },
-  async () => {
-    const docs = await loadAll();
-    return ok({
-      root: ROOT,
-      documents: docs.map((d) => ({
-        document: d.docRelPath,
-        needs_attention: d.file.threads.filter((t) => t.status === 'open' || t.status === 'stale')
-          .length,
-        answered: d.file.threads.filter((t) => t.status === 'answered').length,
-        resolved: d.file.threads.filter((t) => t.status === 'resolved').length,
-        total: d.file.threads.length,
-      })),
-    });
   },
 );
 
