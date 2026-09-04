@@ -2,9 +2,8 @@
 #
 # The shape here assumes nobody is watching: minor and patch bumps are grouped
 # into a single PR that .github/workflows/automerge.yml merges once CI is green,
-# and majors open individually so they wait for a human. If you stop reading
-# notifications entirely, the worst case is a stack of open major PRs — never a
-# silent change to what ships.
+# and majors are not proposed at all. If you stop reading notifications entirely,
+# nothing rots silently and nothing lands unreviewed.
 version: 2
 
 updates:
@@ -17,6 +16,21 @@ updates:
     commit-message:
       prefix: deps
       prefix-development: deps-dev
+    ignore:
+      # Majors are not routine upkeep here. Nobody is around to judge whether a
+      # green build means the extension still works, and left on they arrive
+      # four at a time and sit forever — filling the PR budget above until the
+      # grouped minor/patch PR, the one thing that does merge itself, stops
+      # being opened at all.
+      #
+      # This does not gate security fixes. An `ignore` scoped by `update-types`
+      # applies to version updates only, so an advisory whose smallest fix is a
+      # major still opens a PR — and then the major means something, because it
+      # means nothing smaller existed. Do not rewrite this as a version range
+      # (`versions: '>=x'`): that form *does* suppress security updates, which
+      # is the opposite of what it looks like.
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
     groups:
       # One PR for everything non-breaking, so auto-merge has one thing to do
       # per week instead of eight.
