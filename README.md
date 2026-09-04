@@ -62,9 +62,16 @@ writes the new name and deletes the `review.md` the old version left shadowing C
 Code's own. An explicit `mdreview.sendPrompt` in your settings is yours, so it is left
 alone; update it by hand if it still says `/review`.
 
-The generated `.mcp.json` points at VS Code's bundled Node and the installed extension
-by absolute path, so it is machine-specific — if you commit it, everyone else re-runs
-the setup command on their own machine.
+The generated `.mcp.json` points at VS Code's bundled Node by absolute path, so it is
+machine-specific — if you commit it, everyone else re-runs the setup command on their own
+machine.
+
+That path rots on its own: VS Code's bundled Node moves when VS Code updates. The
+extension re-checks the entry every time it starts and rewrites it when it has stopped
+pointing at anything, then tells you to restart Claude Code — so a hand-off that silently
+stopped working is not something you have to notice yourself. The server it launches is a
+copy kept outside the versioned install directory, so extension updates do not move it at
+all.
 
 The extension is disabled in [Restricted Mode](https://code.visualstudio.com/docs/editor/workspace-trust):
 it reads comment threads from files in the workspace, and the hand-off types a

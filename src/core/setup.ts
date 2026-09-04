@@ -70,6 +70,62 @@ export function mergeMcpConfig(
   };
 }
 
+/** The entry we wrote for `name`, or undefined when there is none to read. */
+export function readMcpEntry(
+  existingText: string | undefined,
+  name: string,
+): McpServerEntry | undefined {
+  if (existingText === undefined || existingText.trim() === '') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(existingText);
+  } catch {
+    // Unreadable is not the same as absent, but neither is it something to
+    // repair: mergeMcpConfig refuses to write over a file it cannot parse, and
+    // reporting "no entry" keeps the repair path from trying.
+    return undefined;
+  }
+  if (!isPlainObject(parsed)) return undefined;
+  const servers = parsed.mcpServers;
+  if (!isPlainObject(servers)) return undefined;
+  const entry = servers[name];
+  if (!isPlainObject(entry)) return undefined;
+  if (typeof entry.command !== 'string' || !Array.isArray(entry.args)) return undefined;
+  return {
+    command: entry.command,
+    args: entry.args.filter((a): a is string => typeof a === 'string'),
+    ...(isPlainObject(entry.env) ? { env: entry.env as Record<string, string> } : {}),
+  };
+}
+
+/** Which of a stored entry's absolute paths has stopped existing. */
+export type StalePath = 'interpreter' | 'server' | null;
+
+/**
+ * Whether a registration we wrote earlier still points at anything.
+ *
+ * Both paths in it rot by design. VS Code's bundled node lives under a
+ * directory named after the build that shipped it, and an extension's install
+ * directory is named after its version — so a VS Code update breaks the first
+ * and an extension update breaks the second, silently, in a file nobody looks
+ * at. The entry is therefore re-checked every activation rather than trusted
+ * once at setup.
+ *
+ * Only a path that is genuinely gone counts. Someone who repointed the entry at
+ * their own interpreter keeps it for as long as it works, which a "rewrite
+ * whenever it differs from what we would write today" check would not allow.
+ */
+export function stalePath(
+  entry: McpServerEntry | undefined,
+  exists: (p: string) => boolean,
+): StalePath {
+  if (!entry) return null;
+  if (!exists(entry.command)) return 'interpreter';
+  const server = entry.args[0];
+  if (server === undefined || !exists(server)) return 'server';
+  return null;
+}
+
 /**
  * Basename of the generated slash command, so `/markdown-review` invokes it.
  *

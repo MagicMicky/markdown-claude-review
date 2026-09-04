@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'node:path';
 import { EDITING_CONTRACT } from '../core/guidance.js';
 import {
   COMMAND_MARKER,
@@ -7,6 +6,9 @@ import {
   LEGACY_COMMAND_NAME,
   isOurCommand,
   mergeMcpConfig,
+  readMcpEntry,
+  stalePath,
+  type McpServerEntry,
 } from '../core/setup.js';
 import { ReviewActions } from './actions.js';
 import { CommentUI } from './comments.js';
@@ -54,6 +56,41 @@ Scope, if given: $ARGUMENTS
 
 ${EDITING_CONTRACT}
 `;
+
+/**
+ * Where the MCP server is launched from, which is deliberately not where it is
+ * installed.
+ *
+ * An extension's install directory is named after its version, so every update
+ * moves `dist/mcp.js` and invalidates any config pointing at it. `globalStorageUri`
+ * is keyed on the extension id alone and survives updates, so a registration
+ * written against this path stays correct for the life of the install.
+ */
+function stableServerPath(context: vscode.ExtensionContext): vscode.Uri {
+  return vscode.Uri.joinPath(context.globalStorageUri, 'mcp.js');
+}
+
+/**
+ * Keep the launchable copy in step with the installed one.
+ *
+ * Compared by size and mtime rather than by extension version: a development
+ * build rewrites `dist/mcp.js` without the version changing, and a stamp would
+ * leave the F5 host running whatever was there first.
+ */
+async function syncStableServer(context: vscode.ExtensionContext): Promise<vscode.Uri> {
+  const src = vscode.Uri.joinPath(context.extensionUri, 'dist', 'mcp.js');
+  const dest = stableServerPath(context);
+  const srcStat = await vscode.workspace.fs.stat(src);
+  try {
+    const destStat = await vscode.workspace.fs.stat(dest);
+    if (destStat.size === srcStat.size && destStat.mtime >= srcStat.mtime) return dest;
+  } catch {
+    /* not copied yet */
+  }
+  await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+  await vscode.workspace.fs.copy(src, dest, { overwrite: true });
+  return dest;
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -125,6 +162,73 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   };
 
+  /** The registration setup writes, and the one a repair restores it to. */
+  const mcpEntry = (server: vscode.Uri): McpServerEntry => ({
+    command: process.execPath,
+    args: [server.fsPath],
+    env: {
+      MDREVIEW_ROOT: folder.uri.fsPath,
+      MDREVIEW_DIR: session.reviewDir,
+    },
+  });
+
+  const pathExists = async (p: string): Promise<boolean> => {
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.file(p));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Put back a registration that has stopped pointing at anything.
+   *
+   * Runs on activation, which is every window and every session, because that is
+   * when the paths it checks have had a chance to move underneath it — a VS Code
+   * update renames the directory holding its bundled node, and an extension
+   * update renames the one holding the server.
+   *
+   * Repairs, never registers: a workspace with no `.mcp.json`, or one where our
+   * entry was removed, is a workspace nobody enabled, and enabling one stays a
+   * deliberate act. An unparseable file is left alone by `mergeMcpConfig` for the
+   * same reason setup leaves it alone — it may hold other servers.
+   */
+  const healMcpConfig = async (): Promise<void> => {
+    const mcpPath = vscode.Uri.joinPath(folder.uri, '.mcp.json');
+    let text: string;
+    try {
+      text = Buffer.from(await vscode.workspace.fs.readFile(mcpPath)).toString('utf8');
+    } catch {
+      return;
+    }
+
+    const entry = readMcpEntry(text, 'markdown-review');
+    if (!entry) return;
+
+    const alive = new Set<string>();
+    for (const p of [entry.command, ...entry.args]) {
+      if (await pathExists(p)) alive.add(p);
+    }
+    const stale = stalePath(entry, (p) => alive.has(p));
+    if (!stale) return;
+
+    const merged = mergeMcpConfig(text, 'markdown-review', mcpEntry(await syncStableServer(context)));
+    if (!merged.ok) return;
+    await vscode.workspace.fs.writeFile(mcpPath, Buffer.from(merged.json, 'utf8'));
+
+    // Not silent, because the repair alone changes nothing: Claude Code reads
+    // .mcp.json when it starts, so a session that is already running keeps the
+    // dead path until it is restarted.
+    const what =
+      stale === 'interpreter'
+        ? "VS Code's bundled Node moved, which happens on a VS Code update"
+        : 'the extension moved, which happens on an extension update';
+    void vscode.window.showInformationMessage(
+      `Repaired the markdown-review entry in .mcp.json — ${what}. Restart Claude Code in this workspace to reconnect.`,
+    );
+  };
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('mdreview.replaceBuiltInPreview')) applyPreviewOwnership();
@@ -138,6 +242,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   applyInlineMode();
   applyPreviewOwnership();
   applyResolvedVisibility();
+  // Best-effort: a repair that cannot run leaves the workspace exactly as it was,
+  // and the setup command is still there to do it deliberately. Failing loudly on
+  // activation would put an error in front of someone who did nothing.
+  void healMcpConfig().catch(() => undefined);
 
   /** Thread id from a webview/tree string, or from an inline thread's title bar. */
   const idFrom = (arg: unknown): string | undefined => {
@@ -352,14 +460,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }
 
-    const merged = mergeMcpConfig(existingText, 'markdown-review', {
-      command: process.execPath,
-      args: [path.join(context.extensionPath, 'dist', 'mcp.js')],
-      env: {
-        MDREVIEW_ROOT: folder.uri.fsPath,
-        MDREVIEW_DIR: session.reviewDir,
-      },
-    });
+    const merged = mergeMcpConfig(
+      existingText,
+      'markdown-review',
+      mcpEntry(await syncStableServer(context)),
+    );
     if (!merged.ok) {
       const open = await vscode.window.showErrorMessage(merged.reason, 'Open .mcp.json');
       if (open) await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(mcpPath));

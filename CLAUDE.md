@@ -114,6 +114,15 @@ instead of an error. `COMMAND_NAME` and `LEGACY_COMMAND_NAME` in `src/core/setup
 the only place either name is written, and setup deletes the legacy file when it still
 carries our marker.
 
+**Nothing durable points at a versioned path.** Both paths a registration needs rot:
+VS Code's bundled node lives under a directory named after its build, and an extension's
+install directory is named after its version. So the server is launched from
+`globalStorageUri`, which is keyed on the extension id alone, and `syncStableServer`
+copies `dist/mcp.js` there on activation. `healMcpConfig` re-checks the stored entry
+every activation and rewrites it when a path has genuinely gone — not when it merely
+differs from what setup would write today, or a hand-repointed interpreter would be
+stomped. It repairs, never registers: a workspace with no entry is one nobody enabled.
+
 **A review file is never overwritten from a bad read.** `loadReview` distinguishes
 absent from unreadable, and both `Session` and the MCP server refuse to write over the
 latter — the sidecar is the only copy of that comment history. Both also merge against
