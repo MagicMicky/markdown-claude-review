@@ -55,6 +55,16 @@ test('a lost anchor is reported, not guessed at', () => {
   assert.equal(card.sortKey, LOST_SORT_KEY);
 });
 
+test('a resolved thread whose text is gone is history, not something to re-attach', () => {
+  const card = buildCard(thread({ status: 'resolved' }), undefined);
+  assert.equal(card.anchor.attachment, 'lost');
+  assert.equal(
+    card.canReattach,
+    false,
+    're-attaching would flip a closed thread back open, which nobody asked for',
+  );
+});
+
 test('a drifted card shows the original wording plus what it says now', () => {
   const card = buildCard(
     thread(),

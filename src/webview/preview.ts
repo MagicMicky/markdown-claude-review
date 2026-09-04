@@ -417,10 +417,14 @@ function renderBubble(card: CardVM, sig: string, now: number): HTMLElement {
       send.addEventListener('click', () => reply(card.id, box.value));
       actions.append(send);
     }
-    const resolve = el('button', '', 'Resolve');
-    resolve.disabled = busy;
-    resolve.addEventListener('click', () => mutate('resolve', card.id));
-    actions.append(resolve);
+    // The closed history is read-only in spirit but not in fact: a thread shown
+    // here because the toggle is on still needs a way back, and offering
+    // Resolve on something already resolved would be a no-op button.
+    const closed = card.status === 'resolved';
+    const status = el('button', '', closed ? 'Reopen' : 'Resolve');
+    status.disabled = busy;
+    status.addEventListener('click', () => mutate(closed ? 'reopen' : 'resolve', card.id));
+    actions.append(status);
     actions.append(el('span', 'spacer'));
     const del = el('button', 'link danger', 'Delete');
     del.disabled = busy;
@@ -525,7 +529,7 @@ function reattachTo(threadId: string): void {
   renderMargin();
 }
 
-function mutate(kind: 'resolve' | 'delete', threadId: string): void {
+function mutate(kind: 'resolve' | 'reopen' | 'delete', threadId: string): void {
   const opId = nextOp();
   state.pending[opId] = { kind: 'status', threadId };
   post({ type: kind, opId, threadId } as ViewMessage);

@@ -78,9 +78,16 @@ extension and the MCP server write the same JSON from different processes.
 inline threads, the decorations and the preview all render `Session` and post commands
 back; none of them owns state or calls another. That is what keeps them in sync, and
 what lets `inlineThreads: 'off'` dispose the whole comment controller without taking
-any command with it. Resolved threads are hidden in the preview and kept in the inline
-widget, so the closed history has exactly one home. Two events, not one: `onDidChange` for thread content,
+any command with it. Two events, not one: `onDidChange` for thread content,
 `onDidReanchor` for offsets moving while typing.
+
+**Resolved threads default to one home.** They are hidden in the preview and kept in the
+inline widget, so the closed history has somewhere to live without cluttering the
+surface you work on. `showResolvedInPreview` opts into a second view of it, and the
+bubble changes shape to match: Reopen instead of Resolve, and `canReattach` is false, so
+reading the history can never silently pull a thread back out of `resolved`. Both the
+cards and the highlights come off one filtered list in `pushThreads`, or the margin and
+the tinting would disagree about which threads exist.
 
 **Never reassign a `CommentThread.collapsibleState` on update.** Set it at creation and
 in the reveal path only. Reassigning on every fan-out snaps a thread the user just
