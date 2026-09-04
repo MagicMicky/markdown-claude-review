@@ -1,7 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { EDITING_CONTRACT } from '../core/guidance.js';
-import { COMMAND_MARKER, isOurCommand, mergeMcpConfig } from '../core/setup.js';
+import {
+  COMMAND_MARKER,
+  COMMAND_NAME,
+  LEGACY_COMMAND_NAME,
+  isOurCommand,
+  mergeMcpConfig,
+} from '../core/setup.js';
 import { ReviewActions } from './actions.js';
 import { CommentUI } from './comments.js';
 import { inlineMode, showResolvedInPreview } from './config.js';
@@ -14,9 +20,9 @@ import { Session } from './session.js';
 const SUBMIT_DELAY_MS = 80;
 
 /**
- * Written to .claude/commands/review.md so `/review` works in Claude Code.
- * Plain English also works — the MCP server ships the same guidance as its
- * connect-time instructions — but a slash command makes it one keystroke.
+ * Written to .claude/commands/markdown-review.md so `/markdown-review` works in
+ * Claude Code. Plain English also works — the MCP server ships the same guidance
+ * as its connect-time instructions — but a slash command makes it one keystroke.
  */
 const REVIEW_COMMAND = `---
 description: Address the review comments left on markdown documents in this workspace
@@ -306,7 +312,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       : undefined;
     // Nothing more than what you would type yourself. Claude reads the comments
     // through the MCP server, so there is no digest to hand over.
-    const line = vscode.workspace.getConfiguration('mdreview').get('sendPrompt', '/review');
+    const line = vscode.workspace
+      .getConfiguration('mdreview')
+      .get('sendPrompt', `/${COMMAND_NAME}`);
 
     if (terminal) {
       terminal.show(true);
@@ -359,23 +367,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     await vscode.workspace.fs.writeFile(mcpPath, Buffer.from(merged.json, 'utf8'));
 
-    // Never clobber a /review command the user wrote themselves.
     const cmdDir = vscode.Uri.joinPath(folder.uri, '.claude', 'commands');
-    const cmdPath = vscode.Uri.joinPath(cmdDir, 'review.md');
+    const readCommand = async (uri: vscode.Uri): Promise<string | undefined> => {
+      try {
+        return Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+      } catch {
+        return undefined;
+      }
+    };
+
+    // Never clobber a command the user wrote themselves.
+    const cmdPath = vscode.Uri.joinPath(cmdDir, `${COMMAND_NAME}.md`);
+    const existingCommand = await readCommand(cmdPath);
     let wroteCommand = false;
-    let existingCommand: string | undefined;
-    try {
-      existingCommand = Buffer.from(await vscode.workspace.fs.readFile(cmdPath)).toString('utf8');
-    } catch {
-      /* no /review command yet */
-    }
     if (existingCommand === undefined || isOurCommand(existingCommand)) {
       await vscode.workspace.fs.createDirectory(cmdDir);
       await vscode.workspace.fs.writeFile(cmdPath, Buffer.from(REVIEW_COMMAND, 'utf8'));
       wroteCommand = true;
     } else {
       const choice = await vscode.window.showWarningMessage(
-        'This workspace already has its own /review command. Overwrite it?',
+        `This workspace already has its own /${COMMAND_NAME} command. Overwrite it?`,
         { modal: true },
         'Overwrite',
         'Keep mine',
@@ -386,14 +397,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }
 
+    // Earlier versions wrote review.md, which shadows Claude Code's own /review.
+    // Leaving it behind would keep that override alive for a workspace that has
+    // done nothing wrong except upgrade. Only ever remove our own: the marker is
+    // the whole reason it is stamped into the file.
+    let removedLegacy = false;
+    const legacyPath = vscode.Uri.joinPath(cmdDir, `${LEGACY_COMMAND_NAME}.md`);
+    const legacy = await readCommand(legacyPath);
+    if (legacy !== undefined && isOurCommand(legacy)) {
+      await vscode.workspace.fs.delete(legacyPath);
+      removedLegacy = true;
+    }
+
     const kept = merged.siblings.length
       ? ` Kept your other MCP server${merged.siblings.length === 1 ? '' : 's'} (${merged.siblings.join(', ')}).`
       : '';
     const cmd = wroteCommand
-      ? ' Type /review in Claude Code when you want it to read your comments.'
-      : ' Left your /review command alone — just ask Claude to address your review comments instead.';
+      ? ` Type /${COMMAND_NAME} in Claude Code when you want it to read your comments.`
+      : ` Left your /${COMMAND_NAME} command alone — just ask Claude to address your review comments instead.`;
+    const swept = removedLegacy
+      ? ` Removed the /${LEGACY_COMMAND_NAME} command an earlier version left behind, which was shadowing Claude Code's own.`
+      : '';
     const choice = await vscode.window.showInformationMessage(
-      `Registered the markdown-review MCP server.${kept}${cmd} Restart Claude Code in this workspace to pick it up.`,
+      `Registered the markdown-review MCP server.${kept}${cmd}${swept} Restart Claude Code in this workspace to pick it up.`,
       'Open .mcp.json',
     );
     if (choice) await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(mcpPath));
