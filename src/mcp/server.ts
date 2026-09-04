@@ -443,11 +443,16 @@ server.registerTool(
   'list_documents',
   {
     title: 'List reviewed documents',
-    description: 'Documents that have comment threads, with a count of what needs your attention.',
+    description:
+      'Every document that has comment threads, with the state of each: open, answered, resolved. Answers "where does the review stand", not "which document am I reviewing" — for that, call list_threads with no scope and choose from what it lists.',
     inputSchema: {},
   },
   async () => {
     const docs = await loadAll();
+    // The sections come from the same builder as the candidate list, because
+    // this is the other way a caller arrives at "which document did they mean"
+    // and the answer should not be worse for having come in through this door.
+    const sections = new Map(candidatesFor(docs, 'all').map((c) => [c.document, c.sections]));
     return ok({
       root: ROOT,
       documents: docs.map((d) => ({
@@ -456,6 +461,7 @@ server.registerTool(
         answered: d.file.threads.filter((t) => t.status === 'answered').length,
         resolved: d.file.threads.filter((t) => t.status === 'resolved').length,
         total: d.file.threads.length,
+        sections: sections.get(d.docRelPath) ?? [],
       })),
     });
   },

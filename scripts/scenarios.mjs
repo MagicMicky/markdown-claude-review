@@ -245,6 +245,14 @@ function parseTranscript(raw) {
 
 const scoped = (c) => typeof c.input.document === 'string';
 const sweeping = (c) => c.input.all_documents === true;
+/**
+ * Every way of asking "which documents are there" counts as a lookup.
+ *
+ * A trial once satisfied "no wasted round trip" by reaching for list_documents
+ * instead of an unscoped list_threads. Same round trip, different door: a
+ * metric that only watched one of them was measuring the wrong thing.
+ */
+const lookups = (o) => o.lists.filter((c) => !scoped(c) && !sweeping(c)).length + o.listDocuments.length;
 
 /**
  * Each check is named for what it protects, so a failure reads as a sentence
@@ -257,7 +265,7 @@ const SCENARIOS = [
     turns: [`/markdown-review ${FIREWALL}`],
     checks: [
       ['the first call names the document', (o) => o.lists[0]?.input.document === FIREWALL],
-      ['no call went unscoped', (o) => o.lists.every((c) => scoped(c) || sweeping(c))],
+      ['nothing was looked up', (o) => lookups(o) === 0],
       ['the hiring plan was left alone', (o) => !o.touched(HIRING)],
       ['it actually addressed something', (o) => o.mutations.length > 0],
     ],
@@ -271,7 +279,7 @@ const SCENARIOS = [
     ],
     checks: [
       ['the first call names the document already in play', (o) => o.lists[0]?.input.document === HIRING],
-      ['no wasted round trip', (o) => o.lists.filter((c) => !scoped(c) && !sweeping(c)).length === 0],
+      ['no wasted round trip', (o) => lookups(o) === 0],
       ['the firewall policy was left alone', (o) => !o.touched(FIREWALL)],
       ['it actually addressed something', (o) => o.mutations.length > 0],
     ],
@@ -285,7 +293,7 @@ const SCENARIOS = [
       ['it never swept the workspace', (o) => !o.lists.some(sweeping)],
       ['it never scoped to the wrong document', (o) => !o.lists.some((c) => c.input.document === HIRING)],
       ['the hiring plan was left alone', (o) => !o.touched(HIRING)],
-      ['one lookup was enough', (o) => o.lists.filter((c) => !scoped(c) && !sweeping(c)).length <= 1],
+      ['one lookup was enough', (o) => lookups(o) <= 1],
     ],
   },
   {
@@ -359,6 +367,9 @@ async function runOnce(scenario, core, opts) {
   const ours = toolCalls.filter((c) => c.name.startsWith(SERVER_PREFIX));
   const observed = {
     lists: ours.filter((c) => c.name === `${SERVER_PREFIX}list_threads`),
+    listDocuments: ours.filter((c) => c.name === `${SERVER_PREFIX}list_documents`),
+    // In call order, so the report shows the route taken rather than a tally.
+    lookupsInOrder: ours.filter((c) => /_(list_threads|list_documents)$/.test(c.name)),
     mutations: ours.filter((c) => /_(resolve|reply|create)_thread$/.test(c.name)),
     finalText: finalText.toLowerCase(),
     touched: (doc) =>
@@ -385,16 +396,16 @@ async function runOnce(scenario, core, opts) {
 }
 
 function describeCalls(observed) {
-  if (observed.lists.length === 0) return 'list_threads was never called';
-  return observed.lists
-    .map((c) =>
-      c.input.document
+  const calls = observed.lookupsInOrder.map((c) =>
+    c.name.endsWith('list_documents')
+      ? 'list_documents'
+      : c.input.document
         ? `document=${c.input.document}`
         : c.input.all_documents
           ? 'all_documents'
           : 'unscoped',
-    )
-    .join(' → ');
+  );
+  return calls.length === 0 ? 'the server was never called' : calls.join(' → ');
 }
 
 async function main() {
