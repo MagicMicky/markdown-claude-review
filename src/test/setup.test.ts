@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isOurCommand, mergeMcpConfig, COMMAND_MARKER, type McpServerEntry } from '../core/setup.js';
+import {
+  COMMAND_MARKER,
+  COMMAND_NAME,
+  LEGACY_COMMAND_NAME,
+  isOurCommand,
+  mergeMcpConfig,
+  type McpServerEntry,
+} from '../core/setup.js';
 
 const ENTRY: McpServerEntry = { command: '/usr/bin/node', args: ['/ext/dist/mcp.js'] };
 
@@ -74,6 +81,15 @@ test('re-running setup reports that it replaced its own entry', () => {
   assert.ok(r.ok);
   assert.equal(r.replacedExisting, true);
   assert.deepEqual(JSON.parse(r.json).mcpServers['markdown-review'], ENTRY);
+});
+
+test('the generated command does not take a name Claude Code already has', () => {
+  // /review is a Claude Code built-in. Naming ours the same means a workspace
+  // that never ran setup gets a code review out of the hand-off instead of an
+  // unknown-command error — a failure that looks like success. If this ever
+  // gets "simplified" back to a shorter name, it has to be an unused one.
+  assert.notEqual(COMMAND_NAME, 'review');
+  assert.notEqual(COMMAND_NAME, LEGACY_COMMAND_NAME);
 });
 
 test('recognises its own generated slash command', () => {

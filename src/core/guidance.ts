@@ -3,7 +3,7 @@
  *
  * Stated once here and rendered into all three places it is needed — the MCP
  * server's connect-time instructions, the `list_threads` tool result, and the
- * generated /review slash command — so the three cannot drift apart.
+ * generated /markdown-review slash command — so the three cannot drift apart.
  *
  * Deliberately about *how to edit*, not about any particular kind of document:
  * the same rules should hold for a compliance policy, a team strategy, or a set
