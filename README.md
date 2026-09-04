@@ -14,9 +14,10 @@ Everything is local files.
 
 1. Claude Code writes `docs/strategy.md`.
 2. You open the review preview (`Ctrl+K V`), select a passage, and comment on it.
-3. You type `/markdown-review` in Claude Code. Or just say "address my comments on the strategy doc".
-4. Claude calls `list_threads`, edits the doc, then `resolve_thread` (done) or
-   `reply_thread` (needs your input). Its replies appear in the bubble.
+3. You press the **send** button, which types `/markdown-review docs/strategy.md` into
+   Claude Code. Or just say "address my comments on the strategy doc".
+4. Claude calls `list_threads` for that document, edits it, then `resolve_thread` (done)
+   or `reply_thread` (needs your input). Its replies appear in the bubble.
 5. Threads you have not resolved stay open. Nothing is ever silently dropped.
 
 There is no hand-off file and nothing to paste. The threads live behind an MCP server,
@@ -225,7 +226,6 @@ an unreadable file as an empty one would destroy it.
 | `reply_thread` | Ask a clarifying question or push back; leaves the thread open |
 | `resolve_thread` | Close a thread after editing, with a note on what changed |
 | `create_thread` | Flag an unverified claim in its own document and ask you about it |
-| `list_documents` | Which documents have open comments |
 
 The server also ships connect-time instructions telling Claude to reach for
 `list_threads` whenever you mention comments or feedback on a document — so plain
@@ -335,7 +335,7 @@ Thresholds live in `src/core/context.ts` (`SHORT_DOCUMENT_LINES`, `MAX_SECTION_L
 | `mdreview.reviewDir` | `.review` | Where threads are stored |
 | `mdreview.author` | git `user.name` | Name on your comments |
 | `mdreview.terminalName` | `claude` | Substring matching your Claude Code terminal |
-| `mdreview.sendPrompt` | `/markdown-review` | What the Send Review command types for you |
+| `mdreview.sendPrompt` | `/markdown-review` | What Send Review types, before the document path |
 
 The last four are machine-scoped on purpose: `sendPrompt` and `terminalName` decide what
 gets typed into a terminal, so a cloned repository must not be able to set them.

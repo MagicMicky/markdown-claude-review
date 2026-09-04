@@ -179,11 +179,12 @@ Scope, if given: $ARGUMENTS
    neither when nothing has settled it — that returns the documents with comments, to
    match against or to ask me about. The comments are not written in the markdown
    itself; the tool is the only source.
-3. The result includes, per document, its \`outline\`, its size, and the
-   \`section_context\` around each commented passage. Read a whole document only when
-   its \`size_hint\` says it is short, when your change touches something stated
-   elsewhere in it, or when it is not already in your context — once per document,
-   before you edit it, not once per thread.
+3. A scoped result carries the threads, and for a long document its \`outline\` and the
+   \`section_context\` around each commented passage; a short one carries the threads
+   alone. An unscoped result carries no threads at all — paths, counts and sections to
+   choose between. Read a whole document only when its \`size_hint\` says it is short,
+   when your change touches something stated elsewhere in it, or when it is not already
+   in your context — once per document, before you edit it, not once per thread.
 4. Work through the threads one at a time. For each, either edit the document and
    \`resolve_thread\`, or \`reply_thread\` and leave it open. Never resolve a thread you
    did not actually address.

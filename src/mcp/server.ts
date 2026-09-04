@@ -172,7 +172,6 @@ const server = new McpServer(
   { instructions: INSTRUCTIONS },
 );
 
-
 /**
  * The documents a request could be about, for when the request did not say.
  *
@@ -436,34 +435,6 @@ server.registerTool(
     const failed = await persist({ docRelPath: document, file: loaded.file, reviewPath });
     if (failed) return err(failed);
     return ok({ id: thread.id, status: thread.status, line: lineAt(text, start) });
-  },
-);
-
-server.registerTool(
-  'list_documents',
-  {
-    title: 'List reviewed documents',
-    description:
-      'Every document that has comment threads, with the state of each: open, answered, resolved. Answers "where does the review stand", not "which document am I reviewing" — for that, call list_threads with no scope and choose from what it lists.',
-    inputSchema: {},
-  },
-  async () => {
-    const docs = await loadAll();
-    // The sections come from the same builder as the candidate list, because
-    // this is the other way a caller arrives at "which document did they mean"
-    // and the answer should not be worse for having come in through this door.
-    const sections = new Map(candidatesFor(docs, 'all').map((c) => [c.document, c.sections]));
-    return ok({
-      root: ROOT,
-      documents: docs.map((d) => ({
-        document: d.docRelPath,
-        needs_attention: d.file.threads.filter((t) => matchesStatus(t, 'needs_attention')).length,
-        answered: d.file.threads.filter((t) => t.status === 'answered').length,
-        resolved: d.file.threads.filter((t) => t.status === 'resolved').length,
-        total: d.file.threads.length,
-        sections: sections.get(d.docRelPath) ?? [],
-      })),
-    });
   },
 );
 

@@ -18,9 +18,10 @@ export PATH="$HOME/.nvm/versions/node/v22.19.0/bin:$PATH"
 ```sh
 npm run typecheck   # tsc --noEmit, strict
 npm test            # compiles to dist-test/, runs node:test
-npm run build       # esbuild -> dist/extension.js and dist/mcp.js
+npm run build       # esbuild -> dist/extension.js, dist/mcp.js, dist/preview.js
 npm run watch       # rebuild on change
 npm run package     # build + vsce -> markdown-claude-review.vsix
+npm run scenarios   # local only, spends a Claude subscription. See below.
 ```
 
 Run `typecheck` and `test` before committing. CI runs both on Node 20 and 22.
@@ -75,7 +76,10 @@ call sites; a test asserts every rule reaches the prose form. Two contracts, kep
 either into the other leaves a call site that renders one silently missing half the rules.
 
 **A review is scoped to what was asked for, and an unscoped call returns candidates
-rather than threads.** `list_threads` takes `document` for one, `all_documents` for the
+rather than threads.** One tool answers "which documents have comments", and it is this
+one — a second listing tool existed until a scenario trial reached for it to pick a
+document, which is what any tool named for listing documents will be used for.
+`list_threads` takes `document` for one, `all_documents` for the
 workspace, and answers neither with the documents that have comments — paths, counts and
 the headings they sit under (`src/core/scope.ts`). None of the three is discouraged; the
 point is that the scope is stated rather than assumed, because "everything unfinished in

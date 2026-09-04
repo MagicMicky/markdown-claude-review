@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Trials for the four ways a review gets scoped.
+ * Trials for the ways a review gets scoped.
  *
  * Everything else in this repo tests code we wrote. This tests something we do
  * not control: whether Claude, reading the tool descriptions and the generated
@@ -19,9 +19,11 @@
  * subscription, and a model is not a deterministic function. Read the pass
  * rates as evidence, not as a gate.
  *
- *   npm run scenarios                 # every scenario, once each
- *   npm run scenarios -- --runs 5     # five trials each, for a rate
+ *   npm run scenarios                    # every scenario, once each
+ *   npm run scenarios -- --list          # what they are, without running them
+ *   npm run scenarios -- --runs 5        # five trials each, for a rate
  *   npm run scenarios -- --only sweep --keep
+ *   npm run scenarios -- --model <name>  # try the rules against another model
  */
 
 import * as esbuild from 'esbuild';
@@ -84,16 +86,25 @@ teams so that neither hires in isolation.
 `,
 };
 
-/** Comments a human would plausibly have left, anchored to real text. */
+/**
+ * Comments a human would plausibly have left, anchored to real text.
+ *
+ * The two `resolved` ones are history, not work: they are what a status report
+ * has to account for, and what must never turn up as something to address.
+ */
 const COMMENTS = [
   [FIREWALL, 'All outbound traffic leaves through the managed proxy on 10.0.4.8:3128.',
     'Check this against the terraform — I am fairly sure the proxy address moved last month.'],
   [FIREWALL, 'Exceptions are granted for 90 days.',
     'Is 90 right? I remember agreeing 30 in the security review.'],
+  [FIREWALL, 'This policy covers every workload in the production VPC.',
+    'Say production explicitly rather than "every workload".', 'resolved'],
   [HIRING, 'We will hire four engineers in Q3.',
     'Finance approved three, not four. Fix the number and anything downstream of it.'],
   [HIRING, 'Offers close within two weeks of final interview.',
     'Two weeks is aspirational. Say what actually happens, or drop the sentence.'],
+  [HIRING, 'Every candidate sees the same four-stage loop.',
+    'Four stages, or five? Check with the recruiting team.', 'resolved'],
 ];
 
 /* ------------------------------------------------------------------ harness */
@@ -134,7 +145,7 @@ async function buildWorkspace(core) {
   }
 
   const byDoc = new Map();
-  for (const [rel, quote, body] of COMMENTS) {
+  for (const [rel, quote, body, status] of COMMENTS) {
     const text = DOCS[rel];
     const start = text.indexOf(quote);
     if (start === -1) throw new Error(`fixture quote missing from ${rel}: ${quote}`);
@@ -142,15 +153,21 @@ async function buildWorkspace(core) {
       core.buildAnchor(text, start, start + quote.length),
       core.makeMessage('user', 'Mickael', body),
     );
+    if (status === 'resolved') {
+      core.appendMessage(thread, core.makeMessage('claude', 'Claude', 'Done — reworded as asked.'));
+      core.setStatus(thread, 'resolved');
+    }
     if (!byDoc.has(rel)) byDoc.set(rel, []);
     byDoc.get(rel).push(thread);
   }
+  const closed = {};
   for (const [rel, threads] of byDoc) {
     await core.writeReview(core.reviewPathFor(root, '.review', rel), {
       version: 1,
       document: rel,
       threads,
     });
+    closed[rel] = threads.filter((t) => t.status === 'resolved').map((t) => t.id);
   }
 
   // The server is launched exactly as the extension would launch it, so the
@@ -169,7 +186,7 @@ async function buildWorkspace(core) {
   await fsp.mkdir(commands, { recursive: true });
   await fsp.writeFile(path.join(commands, `${core.COMMAND_NAME}.md`), core.REVIEW_COMMAND, 'utf8');
 
-  return root;
+  return { root, closed };
 }
 
 const TRACKED = [
@@ -246,13 +263,13 @@ function parseTranscript(raw) {
 const scoped = (c) => typeof c.input.document === 'string';
 const sweeping = (c) => c.input.all_documents === true;
 /**
- * Every way of asking "which documents are there" counts as a lookup.
+ * A call that asks which documents exist rather than reviewing one.
  *
- * A trial once satisfied "no wasted round trip" by reaching for list_documents
- * instead of an unscoped list_threads. Same round trip, different door: a
- * metric that only watched one of them was measuring the wrong thing.
+ * A trial once satisfied "no wasted round trip" by reaching for a second tool
+ * that also listed documents. Same round trip, different door — which is why
+ * that tool is gone and there is only one way to ask this now.
  */
-const lookups = (o) => o.lists.filter((c) => !scoped(c) && !sweeping(c)).length + o.listDocuments.length;
+const lookups = (o) => o.lists.filter((c) => !scoped(c) && !sweeping(c)).length;
 
 /**
  * Each check is named for what it protects, so a failure reads as a sentence
@@ -268,6 +285,7 @@ const SCENARIOS = [
       ['nothing was looked up', (o) => lookups(o) === 0],
       ['the hiring plan was left alone', (o) => !o.touched(HIRING)],
       ['it actually addressed something', (o) => o.mutations.length > 0],
+      ['the closed thread stayed closed', (o) => o.closedStayedClosed(FIREWALL)],
     ],
   },
   {
@@ -282,6 +300,7 @@ const SCENARIOS = [
       ['no wasted round trip', (o) => lookups(o) === 0],
       ['the firewall policy was left alone', (o) => !o.touched(FIREWALL)],
       ['it actually addressed something', (o) => o.mutations.length > 0],
+      ['the closed thread stayed closed', (o) => o.closedStayedClosed(HIRING)],
     ],
   },
   {
@@ -318,6 +337,8 @@ const SCENARIOS = [
       ['it took the sweep it was offered',
         (o) => o.lists.some(sweeping) || new Set(o.lists.filter(scoped).map((c) => c.input.document)).size === 2],
       ['both documents were addressed', (o) => o.touched(FIREWALL) && o.touched(HIRING)],
+      ['neither closed thread was reopened',
+        (o) => o.closedStayedClosed(FIREWALL) && o.closedStayedClosed(HIRING)],
     ],
   },
 ];
@@ -325,7 +346,7 @@ const SCENARIOS = [
 /* -------------------------------------------------------------------- main */
 
 function parseArgs(argv) {
-  const opts = { runs: 1, only: null, keep: false, model: null };
+  const opts = { runs: 1, only: null, keep: false, model: null, list: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--runs') opts.runs = Number(argv[++i]);
@@ -339,7 +360,7 @@ function parseArgs(argv) {
 }
 
 async function runOnce(scenario, core, opts) {
-  const root = await buildWorkspace(core);
+  const { root, closed } = await buildWorkspace(core);
   const before = await snapshot(root);
   const sessionId = crypto.randomUUID();
   const toolCalls = [];
@@ -364,16 +385,35 @@ async function runOnce(scenario, core, opts) {
   }
 
   const after = await snapshot(root);
+  const reviewOf = async (doc) => {
+    try {
+      return JSON.parse(await fsp.readFile(path.join(root, '.review', ...`${doc}.review.json`.split('/')), 'utf8'));
+    } catch {
+      return { threads: [] };
+    }
+  };
+  const finalReviews = {
+    [FIREWALL]: await reviewOf(FIREWALL),
+    [HIRING]: await reviewOf(HIRING),
+  };
   const ours = toolCalls.filter((c) => c.name.startsWith(SERVER_PREFIX));
   const observed = {
     lists: ours.filter((c) => c.name === `${SERVER_PREFIX}list_threads`),
-    listDocuments: ours.filter((c) => c.name === `${SERVER_PREFIX}list_documents`),
-    // In call order, so the report shows the route taken rather than a tally.
-    lookupsInOrder: ours.filter((c) => /_(list_threads|list_documents)$/.test(c.name)),
     mutations: ours.filter((c) => /_(resolve|reply|create)_thread$/.test(c.name)),
     finalText: finalText.toLowerCase(),
     touched: (doc) =>
       before[doc] !== after[doc] || before[`.review/${doc}.review.json`] !== after[`.review/${doc}.review.json`],
+    // Status is never destroyed: closed history has to survive a review that
+    // ran over the same document.
+    //
+    // By id, not by count. A count cannot tell the fixture's closed thread from
+    // one Claude closed correctly on this run — so a total of "still 1 resolved"
+    // reads as success only when nothing was addressed, which is the opposite of
+    // what these scenarios want.
+    closedStayedClosed: (doc) =>
+      closed[doc].every((id) =>
+        finalReviews[doc].threads.some((t) => t.id === id && t.status === 'resolved'),
+      ),
   };
 
   const results = scenario.checks.map(([label, fn]) => {
@@ -396,14 +436,12 @@ async function runOnce(scenario, core, opts) {
 }
 
 function describeCalls(observed) {
-  const calls = observed.lookupsInOrder.map((c) =>
-    c.name.endsWith('list_documents')
-      ? 'list_documents'
-      : c.input.document
-        ? `document=${c.input.document}`
-        : c.input.all_documents
-          ? 'all_documents'
-          : 'unscoped',
+  const calls = observed.lists.map((c) =>
+    c.input.document
+      ? `document=${c.input.document}`
+      : c.input.all_documents
+        ? 'all_documents'
+        : 'unscoped',
   );
   return calls.length === 0 ? 'the server was never called' : calls.join(' → ');
 }
