@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
-import { EDITING_CONTRACT, SCOPE_CONTRACT } from '../core/guidance.js';
 import { matchesStatus } from '../core/scope.js';
 import {
-  COMMAND_MARKER,
   COMMAND_NAME,
   LEGACY_COMMAND_NAME,
+  REVIEW_COMMAND,
   isOurCommand,
   mergeMcpConfig,
   readMcpEntry,
@@ -21,53 +20,6 @@ import { Session } from './session.js';
 
 /** Pause between typing the prompt and pressing Enter, so the TUI settles the paste. */
 const SUBMIT_DELAY_MS = 80;
-
-/**
- * Written to .claude/commands/markdown-review.md so `/markdown-review` works in
- * Claude Code. Plain English also works — the MCP server ships the same guidance
- * as its connect-time instructions — but a slash command makes it one keystroke.
- */
-const REVIEW_COMMAND = `---
-description: Address the review comments left on markdown documents in this workspace
-argument-hint: [document to review — a path, a description, or nothing]
----
-${COMMAND_MARKER}
-
-I have left comment threads on markdown documents in this workspace. Address them now.
-
-Scope, if given: $ARGUMENTS
-
-## Process
-
-1. Work out what you are reviewing before you call anything. The scope above is free
-   text — a path, a description of a document, "all of them", or empty. If it names a
-   path, or if this session has already been working on one document, that is your
-   scope. If it describes a document without naming one, you still need its path, and
-   the unscoped call in step 2 is how you get it.
-2. Call \`list_threads\` from the \`markdown-review\` MCP server. Pass \`document\` when
-   you have a path, \`all_documents: true\` when I asked for the whole workspace, and
-   neither when nothing has settled it — that returns the documents with comments, to
-   match against or to ask me about. The comments are not written in the markdown
-   itself; the tool is the only source.
-3. The result includes, per document, its \`outline\`, its size, and the
-   \`section_context\` around each commented passage. Read a whole document only when
-   its \`size_hint\` says it is short, when your change touches something stated
-   elsewhere in it, or when it is not already in your context — once per document,
-   before you edit it, not once per thread.
-4. Work through the threads one at a time. For each, either edit the document and
-   \`resolve_thread\`, or \`reply_thread\` and leave it open. Never resolve a thread you
-   did not actually address.
-5. Never edit files under \`.review/\` by hand. Use the tools.
-6. Finish by summarising what you changed, and what you left open and why.
-
-## Which document
-
-${SCOPE_CONTRACT}
-
-## How to edit
-
-${EDITING_CONTRACT}
-`;
 
 /**
  * Where the MCP server is launched from, which is deliberately not where it is

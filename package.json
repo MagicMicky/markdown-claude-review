@@ -353,6 +353,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "test": "node --test dist-test/test/*.test.js dist-test/test/webview/*.test.js",
     "pretest": "node -e \"fs.rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && tsc -p tsconfig.webviewtest.json",
+    "scenarios": "npm run build && node scripts/scenarios.mjs",
     "package": "npm run build && vsce package --no-dependencies -o markdown-claude-review.vsix"
   },
   "dependencies": {

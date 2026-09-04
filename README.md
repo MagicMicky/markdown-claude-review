@@ -352,6 +352,7 @@ npm run typecheck  # root project and the webview project
 npm test           # core suite plus the webview's DOM tests
 npm run watch      # rebuild on change
 npm run build      # three bundles: extension, MCP server, preview webview
+npm run scenarios  # local only: drive a real Claude Code session against the tools
 ```
 
 Press `F5` and pick **Run Extension (sandbox)** to launch an Extension Development Host
@@ -363,6 +364,38 @@ because that layer is where the bugs have actually been, and the DOM lib must no
 into `src/core`.
 
 See [CLAUDE.md](CLAUDE.md) for the invariants worth not breaking.
+
+### Scenario trials
+
+`npm run scenarios` tests the one thing a unit test cannot reach: whether Claude,
+reading the tool descriptions and the generated slash command, actually says which
+document it is reviewing. Each scenario builds a throwaway workspace holding two
+unrelated documents with open comments, launches the real MCP server over stdio, and
+drives a real `claude -p` session against it. What it asserts is the calls that were
+made and the files that changed — not the wording of the reply.
+
+| Scenario | Expected call shape |
+| --- | --- |
+| `named-path` — the UI hand-off types a path | `document=…` |
+| `session-context` — two turns, the first about one document | `document=…`, no lookup |
+| `described-document` — "my comments on the firewall policy" | `unscoped → document=…` |
+| `no-context` — "review my comments", cold | `unscoped`, then a question, no edits |
+| `explicit-sweep` — "all my comments, every document" | `all_documents` |
+
+The last one is not decoration. The scope rules exist to stop a sweep nobody asked for,
+not to make a sweep hard to ask for, and that is the check that keeps the difference
+honest.
+
+```sh
+npm run scenarios                        # each scenario once
+npm run scenarios -- --runs 5            # five trials each, for a pass rate
+npm run scenarios -- --only no-context --keep   # keep the workspace and transcript
+```
+
+It uses your own Claude Code login and costs whatever a handful of small sessions costs,
+which is why it is a script rather than part of `npm test`, and why CI never runs it. A
+model is not a deterministic function: read the pass rates as evidence, and a failure as
+a reason to open the transcript, not as a broken build.
 
 ## Releasing
 

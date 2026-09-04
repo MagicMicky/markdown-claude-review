@@ -36,6 +36,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 | `src/webview/` | The preview's client script, bundled to `dist/preview.js`. |
 | `src/mcp/` | The stdio MCP server Claude Code talks to. |
 | `src/test/` | `node:test` suites, `src/core` only. |
+| `scripts/` | Local-only harnesses. Not typechecked, not shipped, not run by CI. |
 | `media/` | Static webview assets. Shipped as-is; do not add them to `.vscodeignore`. |
 
 **`src/core/` must never import `vscode`.** All three bundles depend on it, and it is
@@ -154,10 +155,22 @@ meant to be read in full, and sending both bills the same prose twice.
 
 ## Testing the MCP server
 
-There is no test harness for it. Drive it over real stdio with a small script: spawn
+There is no unit harness for it. Drive it over real stdio with a small script: spawn
 `dist/mcp.js` with `MDREVIEW_ROOT` pointing at a scratch directory, send `initialize`,
 then `notifications/initialized`, then `tools/call` frames as newline-delimited JSON-RPC.
 Worth doing for any change to tool shapes or the guidance payload.
+
+For anything that changes what Claude is *told*, that is not enough — the payload can be
+correct and the behaviour still wrong. `npm run scenarios` (`scripts/scenarios.mjs`)
+drives a real `claude -p` session against a throwaway workspace and asserts on the calls
+made and the files changed: which `document` reached `list_threads` first, whether the
+other document stayed untouched, whether an explicit sweep still sweeps. Local only —
+it spends a Claude subscription, so it is a script, not part of `npm test`, and CI never
+runs it. Add a scenario when you change the scope rules or the slash command; a pass
+rate below 100% is a prompt to read the transcript, not a broken build.
+
+The prompts it exercises come from source, bundled at run time — never from `dist-test/`,
+or a trial can pass against a stale compile of the thing it is testing.
 
 ## Conventions
 
