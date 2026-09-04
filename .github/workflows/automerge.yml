@@ -24,8 +24,19 @@ jobs:
 
       # For a grouped PR this reports the highest bump in the group, so one
       # major anywhere in the batch holds the whole PR back.
+      #
+      # Action majors are the exception, and deliberately so: an unmaintained
+      # repo dies of *not* taking them — action majors get deprecated and then
+      # stop running, whereas a bad one turns CI red on the spot, so the merge
+      # queue below is already the review. The ecosystem output carries
+      # Dependabot's internal name rather than the key from dependabot.yml
+      # (npm is reported as `npm_and_yarn`); `startsWith` covers it whether
+      # that name is spelled `github_actions` or `github-actions`, and no
+      # other ecosystem begins with `github`.
       - name: Enable auto-merge
-        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        if: |
+          steps.meta.outputs.update-type != 'version-update:semver-major'
+          || startsWith(steps.meta.outputs.package-ecosystem, 'github')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
