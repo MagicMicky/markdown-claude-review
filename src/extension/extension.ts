@@ -175,6 +175,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     command: process.execPath,
     args: [server.fsPath],
     env: {
+      // On a desktop host, execPath is not node — it is the Electron helper the
+      // extension host runs in, which boots a GUI process and ignores the script
+      // unless this is set. Only remote hosts, where the extension host is a
+      // plain node process, work without it. So the registration was broken on
+      // every desktop install and correct on every remote one, which is why it
+      // took this long to notice.
+      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       MDREVIEW_ROOT: folder.uri.fsPath,
       MDREVIEW_DIR: session.reviewDir,
     },
