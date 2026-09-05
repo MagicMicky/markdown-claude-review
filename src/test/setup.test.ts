@@ -6,8 +6,7 @@ import {
   LEGACY_COMMAND_NAME,
   isOurCommand,
   mergeMcpConfig,
-  readMcpEntry,
-  stalePath,
+  launcherScript,
   type McpServerEntry,
 } from '../core/setup.js';
 
@@ -99,67 +98,43 @@ test('recognises its own generated slash command', () => {
   assert.equal(isOurCommand('---\ndescription: my own review command\n---\nDo my thing.'), false);
 });
 
-/* ---------------- reading back what we wrote ---------------- */
+/* ---------------- the launcher ---------------- */
 
-const CONFIG = JSON.stringify({
-  mcpServers: {
-    'markdown-review': { command: '/vscode/bin/abc/node', args: ['/store/mcp.js'], env: { A: '1' } },
-    other: { command: 'x', args: [] },
-  },
+test('a real node on PATH wins, so no remembered path decides anything', () => {
+  const sh = launcherScript('posix', '/Applications/Code.app/Contents/MacOS/Code Helper (Plugin)');
+  const first = sh.split('\n').find((l) => l.includes('exec'));
+  assert.match(first ?? '', /command -v node/, 'PATH is consulted before any absolute path');
 });
 
-test('reads back our own entry and leaves the others alone', () => {
-  const e = readMcpEntry(CONFIG, 'markdown-review');
-  assert.deepEqual(e, {
-    command: '/vscode/bin/abc/node',
-    args: ['/store/mcp.js'],
-    env: { A: '1' },
-  });
-});
-
-test('an absent, unparseable or malformed entry reads as nothing to repair', () => {
-  assert.equal(readMcpEntry(CONFIG, 'not-ours'), undefined);
-  assert.equal(readMcpEntry(undefined, 'markdown-review'), undefined);
-  assert.equal(readMcpEntry('{ broken', 'markdown-review'), undefined);
-  // Refusing to parse it is the point: mergeMcpConfig will not write over a file
-  // it cannot read, so reporting an entry here would start a repair that cannot finish.
-  assert.equal(readMcpEntry(JSON.stringify({ mcpServers: { 'markdown-review': 7 } }), 'markdown-review'), undefined);
-  assert.equal(
-    readMcpEntry(JSON.stringify({ mcpServers: { 'markdown-review': { command: 'n' } } }), 'markdown-review'),
-    undefined,
-    'an entry with no args is not one of ours',
+test('the remote interpreter is globbed, never named', () => {
+  const sh = launcherScript('posix', '/x/node');
+  assert.match(sh, /\.vscode-server\/bin\/\*\/node/);
+  assert.ok(
+    !/bin\/[0-9a-f]{8}/.test(sh),
+    'a build hash written into the launcher would rot exactly like the config did',
   );
 });
 
-/* ---------------- rot ---------------- */
-
-const ENTRY_ON_DISK: McpServerEntry = { command: '/vscode/bin/abc/node', args: ['/store/mcp.js'] };
-const all = () => true;
-
-test('an entry pointing at live paths is left as it is', () => {
-  assert.equal(stalePath(ENTRY_ON_DISK, all), null);
+test('the desktop fallback runs the Electron helper as node', () => {
+  const helper = '/Applications/Visual Studio Code.app/Contents/MacOS/Code Helper (Plugin)';
+  const sh = launcherScript('posix', helper);
+  assert.match(sh, new RegExp(`ELECTRON_RUN_AS_NODE=1 exec "${helper.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}"`));
 });
 
-test('a VS Code update is reported as the interpreter going, not the server', () => {
-  const gone = (p: string) => p !== '/vscode/bin/abc/node';
-  assert.equal(stalePath(ENTRY_ON_DISK, gone), 'interpreter');
+test('the fallback is quoted, because both hosts put spaces in it', () => {
+  const sh = launcherScript('posix', '/a b/node');
+  assert.ok(sh.includes('"/a b/node" "$@"'));
+  const cmd = launcherScript('win32', 'C:\\Program Files\\Code.exe');
+  assert.ok(cmd.includes('"C:\\Program Files\\Code.exe" %*'));
 });
 
-test('an extension update is reported as the server going', () => {
-  const gone = (p: string) => p !== '/store/mcp.js';
-  assert.equal(stalePath(ENTRY_ON_DISK, gone), 'server');
+test('the windows launcher is a batch file, CRLF and all', () => {
+  const cmd = launcherScript('win32', 'C:\\Code.exe');
+  assert.ok(cmd.startsWith('@echo off\r\n'));
+  assert.ok(cmd.includes('set ELECTRON_RUN_AS_NODE=1'));
+  assert.ok(!cmd.includes('\n\n'), 'a lone LF in a .cmd is not reliably read');
 });
 
-test('nothing registered is nothing to repair, not something to create', () => {
-  // Repair must never enable a workspace nobody enabled.
-  assert.equal(stalePath(undefined, () => false), null);
-});
-
-test('an interpreter someone repointed by hand survives while it works', () => {
-  const theirs: McpServerEntry = { command: '/usr/local/bin/node', args: ['/store/mcp.js'] };
-  assert.equal(
-    stalePath(theirs, all),
-    null,
-    'differing from what setup would write today is not a reason to rewrite it',
-  );
+test('the posix launcher is executable by shebang, not by luck', () => {
+  assert.ok(launcherScript('posix', '/x').startsWith('#!/bin/sh\n'));
 });

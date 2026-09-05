@@ -72,60 +72,54 @@ export function mergeMcpConfig(
   };
 }
 
-/** The entry we wrote for `name`, or undefined when there is none to read. */
-export function readMcpEntry(
-  existingText: string | undefined,
-  name: string,
-): McpServerEntry | undefined {
-  if (existingText === undefined || existingText.trim() === '') return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(existingText);
-  } catch {
-    // Unreadable is not the same as absent, but neither is it something to
-    // repair: mergeMcpConfig refuses to write over a file it cannot parse, and
-    // reporting "no entry" keeps the repair path from trying.
-    return undefined;
-  }
-  if (!isPlainObject(parsed)) return undefined;
-  const servers = parsed.mcpServers;
-  if (!isPlainObject(servers)) return undefined;
-  const entry = servers[name];
-  if (!isPlainObject(entry)) return undefined;
-  if (typeof entry.command !== 'string' || !Array.isArray(entry.args)) return undefined;
-  return {
-    command: entry.command,
-    args: entry.args.filter((a): a is string => typeof a === 'string'),
-    ...(isPlainObject(entry.env) ? { env: entry.env as Record<string, string> } : {}),
-  };
-}
-
-/** Which of a stored entry's absolute paths has stopped existing. */
-export type StalePath = 'interpreter' | 'server' | null;
-
 /**
- * Whether a registration we wrote earlier still points at anything.
+ * The launcher `.mcp.json` names instead of an interpreter.
  *
- * Both paths in it rot by design. VS Code's bundled node lives under a
- * directory named after the build that shipped it, and an extension's install
- * directory is named after its version — so a VS Code update breaks the first
- * and an extension update breaks the second, silently, in a file nobody looks
- * at. The entry is therefore re-checked every activation rather than trusted
- * once at setup.
+ * Every absolute path to a Node worth running is versioned by somebody: VS Code's
+ * bundled node lives under a directory named after the build that shipped it, and
+ * a desktop host has no node at all — `process.execPath` there is the Electron
+ * helper the extension host runs in, which boots a GUI process unless
+ * ELECTRON_RUN_AS_NODE is set. Writing any of that into a config file is writing
+ * down an answer that expires.
  *
- * Only a path that is genuinely gone counts. Someone who repointed the entry at
- * their own interpreter keeps it for as long as it works, which a "rewrite
- * whenever it differs from what we would write today" check would not allow.
+ * So the config names this script, which sits beside the server in
+ * `globalStorageUri` and is therefore keyed on the extension id alone, and the
+ * question is asked again at every launch instead: a real node first, then
+ * whichever VS Code build exists today, then the Electron helper as itself. None
+ * of those can be stale, because none of them is remembered.
+ *
+ * `fallback` is `process.execPath` — the interpreter this extension host is
+ * running under, whatever it turns out to be. It is quoted, not escaped: a path
+ * containing a double quote would break the script, and no VS Code install has
+ * one.
  */
-export function stalePath(
-  entry: McpServerEntry | undefined,
-  exists: (p: string) => boolean,
-): StalePath {
-  if (!entry) return null;
-  if (!exists(entry.command)) return 'interpreter';
-  const server = entry.args[0];
-  if (server === undefined || !exists(server)) return 'server';
-  return null;
+export function launcherScript(platform: 'win32' | 'posix', fallback: string): string {
+  if (platform === 'win32') {
+    return [
+      '@echo off',
+      'rem Written by the markdown-claude-review extension. Edits are overwritten.',
+      'where node >nul 2>nul',
+      'if %errorlevel%==0 (',
+      '  node %*',
+      '  exit /b %errorlevel%',
+      ')',
+      'set ELECTRON_RUN_AS_NODE=1',
+      `"${fallback}" %*`,
+      '',
+    ].join('\r\n');
+  }
+  return [
+    '#!/bin/sh',
+    '# Written by the markdown-claude-review extension. Edits are overwritten.',
+    'if command -v node >/dev/null 2>&1; then exec node "$@"; fi',
+    '# A remote host has a real node, under a directory named after the build.',
+    'for n in "$HOME"/.vscode-server/bin/*/node "$HOME"/.vscode-server/cli/servers/*/server/node; do',
+    '  [ -x "$n" ] && exec "$n" "$@"',
+    'done',
+    '# A desktop host has only the Electron helper, which needs telling.',
+    `ELECTRON_RUN_AS_NODE=1 exec "${fallback}" "$@"`,
+    '',
+  ].join('\n');
 }
 
 /**

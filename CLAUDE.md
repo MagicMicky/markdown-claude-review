@@ -139,14 +139,21 @@ instead of an error. `COMMAND_NAME` and `LEGACY_COMMAND_NAME` in `src/core/setup
 the only place either name is written, and setup deletes the legacy file when it still
 carries our marker.
 
-**Nothing durable points at a versioned path.** Both paths a registration needs rot:
-VS Code's bundled node lives under a directory named after its build, and an extension's
-install directory is named after its version. So the server is launched from
-`globalStorageUri`, which is keyed on the extension id alone, and `syncStableServer`
-copies `dist/mcp.js` there on activation. `healMcpConfig` re-checks the stored entry
-every activation and rewrites it when a path has genuinely gone — not when it merely
-differs from what setup would write today, or a hand-repointed interpreter would be
-stomped. It repairs, never registers: a workspace with no entry is one nobody enabled.
+**Nothing durable points at a versioned path, and nothing durable names an
+interpreter.** Every absolute path a registration might want is owned by somebody who
+renames it: VS Code's bundled node lives under a directory named after its build, an
+extension's install directory is named after its version, and a desktop host has no node
+to name at all — `process.execPath` there is the Electron helper the extension host runs
+in, which boots a GUI process and ignores its script argument unless
+`ELECTRON_RUN_AS_NODE` is set. So `.mcp.json` names two paths under `globalStorageUri`,
+keyed on the extension id alone: `mcp.js`, and the launcher that runs it.
+`launcherScript` (`src/core/setup.ts`) decides the interpreter at *launch* instead of at
+setup — a real `node`, else whichever VS Code build exists today by glob, else the
+Electron helper told to behave. A stale path cannot exist, because no answer is written
+down. This replaced a heal pass that re-checked the entry on every activation; it was
+correct and it still lost the race, because activation is `onLanguage:markdown` and
+Claude Code reads `.mcp.json` at startup, so the repair landed one restart after the
+session that needed it.
 
 **A review file is never overwritten from a bad read.** `loadReview` distinguishes
 absent from unreadable, and both `Session` and the MCP server refuse to write over the

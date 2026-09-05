@@ -63,16 +63,18 @@ writes the new name and deletes the `review.md` the old version left shadowing C
 Code's own. An explicit `mdreview.sendPrompt` in your settings is yours, so it is left
 alone; update it by hand if it still says `/review`.
 
-The generated `.mcp.json` points at VS Code's bundled Node by absolute path, so it is
-machine-specific — if you commit it, everyone else re-runs the setup command on their own
-machine.
+The generated `.mcp.json` holds absolute paths, so it is machine-specific — if you commit
+it, everyone else re-runs the setup command on their own machine.
 
-That path rots on its own: VS Code's bundled Node moves when VS Code updates. The
-extension re-checks the entry every time it starts and rewrites it when it has stopped
-pointing at anything, then tells you to restart Claude Code — so a hand-off that silently
-stopped working is not something you have to notice yourself. The server it launches is a
-copy kept outside the versioned install directory, so extension updates do not move it at
-all.
+Both of those paths are in the extension's own storage, which is named after the
+extension and nothing else, so neither a VS Code update nor an extension update moves
+them. One is the server; the other is a small launcher that finds a Node to run it with
+at the moment Claude Code starts it — your `node` if you have one, otherwise the one
+inside whichever VS Code build is currently installed. Nothing about your machine is
+recorded at setup time, so nothing recorded can go out of date.
+
+**If you set this up before v0.1.6, re-run the setup command** — on macOS and Windows it
+never worked at all, and the entry it wrote needs replacing.
 
 The extension is disabled in [Restricted Mode](https://code.visualstudio.com/docs/editor/workspace-trust):
 it reads comment threads from files in the workspace, and the hand-off types a
