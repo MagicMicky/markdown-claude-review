@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { matchesStatus } from '../core/scope.js';
 import {
@@ -5,9 +6,8 @@ import {
   LEGACY_COMMAND_NAME,
   REVIEW_COMMAND,
   isOurCommand,
+  launcherScript,
   mergeMcpConfig,
-  readMcpEntry,
-  stalePath,
   type McpServerEntry,
 } from '../core/setup.js';
 import { ReviewActions } from './actions.js';
@@ -34,26 +34,49 @@ function stableServerPath(context: vscode.ExtensionContext): vscode.Uri {
   return vscode.Uri.joinPath(context.globalStorageUri, 'mcp.js');
 }
 
+/** The launcher, beside the server and stable for the same reason. */
+function launcherPath(context: vscode.ExtensionContext): vscode.Uri {
+  const name = process.platform === 'win32' ? 'mcp-run.cmd' : 'mcp-run.sh';
+  return vscode.Uri.joinPath(context.globalStorageUri, name);
+}
+
 /**
- * Keep the launchable copy in step with the installed one.
+ * Put the two files a registration points at where the registration can keep
+ * pointing at them, and keep them current.
  *
- * Compared by size and mtime rather than by extension version: a development
- * build rewrites `dist/mcp.js` without the version changing, and a stamp would
- * leave the F5 host running whatever was there first.
+ * The server is compared by size and mtime rather than by extension version: a
+ * development build rewrites `dist/mcp.js` without the version changing, and a
+ * stamp would leave the F5 host running whatever was there first.
  */
-async function syncStableServer(context: vscode.ExtensionContext): Promise<vscode.Uri> {
+async function syncStableServer(
+  context: vscode.ExtensionContext,
+): Promise<{ server: vscode.Uri; launcher: vscode.Uri }> {
   const src = vscode.Uri.joinPath(context.extensionUri, 'dist', 'mcp.js');
-  const dest = stableServerPath(context);
+  const server = stableServerPath(context);
+  const launcher = launcherPath(context);
+  await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+
   const srcStat = await vscode.workspace.fs.stat(src);
+  let current: vscode.FileStat | undefined;
   try {
-    const destStat = await vscode.workspace.fs.stat(dest);
-    if (destStat.size === srcStat.size && destStat.mtime >= srcStat.mtime) return dest;
+    current = await vscode.workspace.fs.stat(server);
   } catch {
     /* not copied yet */
   }
-  await vscode.workspace.fs.createDirectory(context.globalStorageUri);
-  await vscode.workspace.fs.copy(src, dest, { overwrite: true });
-  return dest;
+  if (!current || current.size !== srcStat.size || current.mtime < srcStat.mtime) {
+    await vscode.workspace.fs.copy(src, server, { overwrite: true });
+  }
+
+  // Rewritten every activation rather than only at setup, so that clearing
+  // globalStorage or editing the script by hand is undone by reloading the
+  // window, and an F5 host picks up a change to it.
+  const script = launcherScript(process.platform === 'win32' ? 'win32' : 'posix', process.execPath);
+  await vscode.workspace.fs.writeFile(launcher, Buffer.from(script, 'utf8'));
+  // workspace.fs has no chmod, and a launcher Claude Code cannot execute is a
+  // launcher that does nothing.
+  if (process.platform !== 'win32') fs.chmodSync(launcher.fsPath, 0o755);
+
+  return { server, launcher };
 }
 
 /** The trigger phrase. The scope — a document path, or "all documents" — is appended. */
@@ -170,79 +193,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   };
 
-  /** The registration setup writes, and the one a repair restores it to. */
-  const mcpEntry = (server: vscode.Uri): McpServerEntry => ({
-    command: process.execPath,
-    args: [server.fsPath],
+  /**
+   * The registration setup writes. Both paths in it live in `globalStorageUri`,
+   * so neither carries a version and neither can rot; which interpreter actually
+   * runs is decided by the launcher, at launch.
+   */
+  const mcpEntry = (paths: { server: vscode.Uri; launcher: vscode.Uri }): McpServerEntry => ({
+    command: paths.launcher.fsPath,
+    args: [paths.server.fsPath],
     env: {
-      // On a desktop host, execPath is not node — it is the Electron helper the
-      // extension host runs in, which boots a GUI process and ignores the script
-      // unless this is set. Only remote hosts, where the extension host is a
-      // plain node process, work without it. So the registration was broken on
-      // every desktop install and correct on every remote one, which is why it
-      // took this long to notice.
-      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       MDREVIEW_ROOT: folder.uri.fsPath,
       MDREVIEW_DIR: session.reviewDir,
     },
   });
-
-  const pathExists = async (p: string): Promise<boolean> => {
-    try {
-      await vscode.workspace.fs.stat(vscode.Uri.file(p));
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  /**
-   * Put back a registration that has stopped pointing at anything.
-   *
-   * Runs on activation, which is every window and every session, because that is
-   * when the paths it checks have had a chance to move underneath it — a VS Code
-   * update renames the directory holding its bundled node, and an extension
-   * update renames the one holding the server.
-   *
-   * Repairs, never registers: a workspace with no `.mcp.json`, or one where our
-   * entry was removed, is a workspace nobody enabled, and enabling one stays a
-   * deliberate act. An unparseable file is left alone by `mergeMcpConfig` for the
-   * same reason setup leaves it alone — it may hold other servers.
-   */
-  const healMcpConfig = async (): Promise<void> => {
-    const mcpPath = vscode.Uri.joinPath(folder.uri, '.mcp.json');
-    let text: string;
-    try {
-      text = Buffer.from(await vscode.workspace.fs.readFile(mcpPath)).toString('utf8');
-    } catch {
-      return;
-    }
-
-    const entry = readMcpEntry(text, 'markdown-review');
-    if (!entry) return;
-
-    const alive = new Set<string>();
-    for (const p of [entry.command, ...entry.args]) {
-      if (await pathExists(p)) alive.add(p);
-    }
-    const stale = stalePath(entry, (p) => alive.has(p));
-    if (!stale) return;
-
-    const merged = mergeMcpConfig(text, 'markdown-review', mcpEntry(await syncStableServer(context)));
-    if (!merged.ok) return;
-    await vscode.workspace.fs.writeFile(mcpPath, Buffer.from(merged.json, 'utf8'));
-
-    // Not silent, because the repair alone changes nothing: Claude Code reads
-    // .mcp.json when it starts, so a session that is already running keeps the
-    // dead path until it is restarted.
-    const what =
-      stale === 'interpreter'
-        ? "VS Code's bundled Node moved, which happens on a VS Code update"
-        : 'the extension moved, which happens on an extension update';
-    void vscode.window.showInformationMessage(
-      `Repaired the markdown-review entry in .mcp.json — ${what}. Restart Claude Code in this workspace to reconnect.`,
-    );
-  };
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -257,10 +220,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   applyInlineMode();
   applyPreviewOwnership();
   applyResolvedVisibility();
-  // Best-effort: a repair that cannot run leaves the workspace exactly as it was,
-  // and the setup command is still there to do it deliberately. Failing loudly on
-  // activation would put an error in front of someone who did nothing.
-  void healMcpConfig().catch(() => undefined);
 
   /** Thread id from a webview/tree string, or from an inline thread's title bar. */
   const idFrom = (arg: unknown): string | undefined => {
