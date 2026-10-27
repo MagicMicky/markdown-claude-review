@@ -31,6 +31,12 @@ updates:
       # is the opposite of what it looks like.
       - dependency-name: '*'
         update-types: [version-update:semver-major]
+      # Not a dependency so much as a statement of which VS Code we support: it
+      # has to stay at or below engines.vscode, and vsce refuses to package
+      # otherwise. A minor bump here is therefore always a red build, and
+      # because it rides in the grouped PR it held back every other update with
+      # it. It moves when engines.vscode does, by hand.
+      - dependency-name: '@types/vscode'
     groups:
       # One PR for everything non-breaking, so auto-merge has one thing to do
       # per week instead of eight.
