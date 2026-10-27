@@ -16,15 +16,20 @@
 }
 
 body {
-  /* Leave room for the bubble column without disturbing markdown.css's own
-     padding, which the built-in sets on html/body. */
-  padding-right: calc(var(--mdreview-margin-width) + var(--mdreview-margin-gap) + 26px) !important;
   position: relative;
+}
+
+/* Leave room for the bubble column without disturbing markdown.css's own
+   padding, which the built-in sets on html/body. Only while the column has
+   something in it: reserved unconditionally, a document with no comments, or
+   only resolved ones, got a blank strip down its right side. */
+body.has-margin {
+  padding-right: calc(var(--mdreview-margin-width) + var(--mdreview-margin-gap) + 26px) !important;
 }
 
 /* Narrow panels cannot afford a margin column; bubbles stack under the text. */
 @media (max-width: 720px) {
-  body {
+  body.has-margin {
     padding-right: 26px !important;
   }
   .margin {

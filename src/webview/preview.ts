@@ -290,6 +290,9 @@ function renderMargin(): void {
   }
 
   margin.replaceChildren(...children);
+  // Before layout: reserving the column reflows the text, which moves every
+  // passage the bubbles are about to be measured against.
+  document.body.classList.toggle('has-margin', children.length > 0);
   // Synchronously, not on the next frame: anything that focuses a newly created
   // bubble must find it already at its passage. Focusing an element still
   // sitting at the top of the margin scrolls the page there.
