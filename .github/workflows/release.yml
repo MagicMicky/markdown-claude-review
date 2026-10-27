@@ -1,10 +1,16 @@
-# Releases, cut two ways.
+# Releases, cut three ways.
 #
-# Automatically: any change to main that affects what ships gets a patch
-# release. That is what carries an auto-merged Dependabot update through to
-# the Marketplace, and so to an installed editor — without it those updates
-# land on main and stop there, which makes the whole auto-merge chain
-# decorative.
+# Automatically: any change a person merges to main that affects what ships
+# gets a patch release.
+#
+# Weekly, for everything else: if main has moved past the latest release tag
+# in a way that affects what ships, release it. This is what carries an
+# auto-merged Dependabot update through to the Marketplace, and so to an
+# installed editor. The push trigger cannot: automerge.yml merges with
+# GITHUB_TOKEN, and GitHub never starts a workflow from a push made with that
+# token, so those merges land on main and stop there. A week's lag is the
+# price of not needing a personal token stored as a secret, which would expire
+# on its own schedule.
 #
 # Deliberately, for a minor or major: push a tag and this releases exactly it.
 #
@@ -32,6 +38,9 @@ on:
     # Changes that cannot alter the packaged extension must not spend a
     # version number. Note this also excludes .github, so a Dependabot bump of
     # an action releases nothing — correctly, since no shipped byte moved.
+    #
+    # The weekly check below applies the same list itself, since a schedule
+    # has no paths filter. Change one, change both.
     paths-ignore:
       - '**.md'
       - '.github/**'
@@ -40,6 +49,11 @@ on:
       - '.gitignore'
       - '.vscodeignore'
       - 'scripts/**'
+  schedule:
+    - cron: '0 7 * * 2'
+  # Same check as the schedule, on demand: releases main only if it has
+  # something unreleased.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -50,7 +64,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A push or a tag already passed its filter, so it always releases. A
+  # scheduled or manual run releases only when main carries a shipped change
+  # the latest tag does not, so a quiet week spends no version number.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide whether there is anything to release
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != schedule ] && [ "$EVENT" != workflow_dispatch ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)"
+          if [ -z "$latest" ]; then
+            echo "No release tags yet; releasing."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The paths-ignore list above, as a regex.
+          shipped="$(git diff --name-only "$latest" HEAD \
+            | grep -vE '\.md$|^\.github/|^LICENSE$|^\.vscode/|^\.gitignore$|^\.vscodeignore$|^scripts/' \
+            || true)"
+
+          if [ -z "$shipped" ]; then
+            echo "Nothing shipped has changed since $latest; no release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changed since $latest:"
+            echo "$shipped"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
+    needs: check
+    if: needs.check.outputs.release == 'true'
     runs-on: ubuntu-latest
 
     steps:
